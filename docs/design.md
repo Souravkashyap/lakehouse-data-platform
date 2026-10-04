@@ -191,9 +191,8 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 **Where it lives.** The service-side outbox write (version bump + outbox insert in one transaction) is described above, not coded. `code/dbt/models/silver/lending/` holds `stg_lending_events.sql`, `silver_lending_loan_events.sql` (append-only history, dedup) and `silver_lending_loans_current.sql` (the ordering guard). Lending is the worked example; other units follow the same pattern.
 
 **Tests.**
-- **dbt unit tests** in `_silver_lending.yml` (T-B-permutation, reduced; real code): a late older event never overwrites newer state; a newer event replaces it; sequences 9, 8, 9 in one batch apply once at 9. `assert_current_matches_latest_history.sql` checks every loan's current sequence equals its highest in history.
-- Replaying a batch twice changes nothing; duplicates in one batch apply once; a late, older event does not regress state.
-- dbt tests: `unique` and `not_null` on `event_id`, unique entity ID in `current`, sequence never decreases.
+- **dbt unit tests** in `_silver_lending.yml` (test 1 in the test plan): a late older event never overwrites newer state; a newer event replaces it; sequences 9, 8, 9 in one batch apply once at 9. `assert_current_matches_latest_history.sql` checks every loan's current sequence equals its highest in history.
+- dbt tests: `unique` and `not_null` on `event_id`, and unique `loan_id` in current state.
 
 ## 9. Deep dive 2 — C: exact paise reconciliation
 
@@ -217,9 +216,7 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 **Where it lives.** `code/dbt/models/silver/shared/` (`silver_money_movements.sql`, `silver_partner_records.sql`, `silver_partner_record_changes.sql`), the partner snapshot and approval models, and `code/dbt/models/gold/finance/fct_reconciliation_items.sql` (the matching engine), with `fct_reconciliation_breaks.sql` and `fct_reconciliation_daily.sql`.
 
 **Tests.**
-- `code/dbt/tests/assert_reconciliation_balances.sql` (T-C-matched+breaks=total, real code): per vendor and day, on both sides, matched paise + break paise = total paise, and the same for counts. It returns rows only when the identity fails.
-- Seeded cases, one per break class, each must land in its class.
-- A cancelling pair (missing 500 paise, duplicate 500 paise) must produce two breaks, not zero.
+- `code/dbt/tests/assert_reconciliation_balances.sql` (test 4 in the test plan): per vendor and day, on both sides, matched paise + break paise = total paise, and the same for counts. It returns rows only when the identity fails.
 
 ## 10. Living with it
 
@@ -243,7 +240,7 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 
 ## 12. Test plan
 
-The full plan is in [test-plan.md](test-plan.md): 14 tests grouped by question (latest state, every paisa, completeness, running it), each naming the mistake it catches. Six are written as code, including the two that matter most: the ordering-guard unit tests (arrival order and duplicates never change the current state) and the balance test (matched + breaks = total on both sides, exact paise).
+The full plan is in [test-plan.md](test-plan.md): six tests, all written as code, each naming the mistake it catches. The two that matter most are the ordering-guard unit tests (arrival order and duplicates never change the current state) and the balance test (matched + breaks = total on both sides, exact paise).
 
 ## 13. Honesty
 

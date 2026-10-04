@@ -1,4 +1,4 @@
--- T-C-matched+breaks=total. Returns rows only when reconciliation lost or double-counted money.
+-- docs/test-plan.md test 4: matched + breaks = total. Returns rows only when reconciliation lost or double-counted money.
 -- Source totals are recomputed independently of the matching engine. Design: section 9.
 with covered as (
 

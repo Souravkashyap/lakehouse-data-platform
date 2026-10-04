@@ -1,4 +1,4 @@
--- T-B-sequence. Returns loans whose current sequence is not the highest sequence in history;
+-- docs/test-plan.md test 3. Returns loans whose current sequence is not the highest sequence in history;
 -- any row means the ordering guard failed. Design: section 8.
 with history as (
 

@@ -24,7 +24,7 @@ models:
               arguments:
                 values: ['APPLIED', 'APPROVED', 'DISBURSED', 'REPAYING', 'OVERDUE', 'CLOSED', 'WRITTEN_OFF']
 
-# Ordering-guard tests T-B-late-older / T-B-dup-batch / T-B-permutation (reduced) from docs/test-plan.md.
+# Ordering-guard tests: test 1 in docs/test-plan.md.
 unit_tests:
   - name: late_older_event_never_overwrites_newer_state
     description: A late event with a lower sequence must not regress state; only the new loan L2 is written.

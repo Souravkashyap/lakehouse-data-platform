@@ -243,7 +243,7 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 
 ## 12. Test plan
 
-The full plan is in [test-plan.md](test-plan.md): 15 tests, each stating what it asserts and how it would fail if the design were wrong. Two are real code: **T-B-permutation** (as three dbt unit tests: arrival order and duplicates never change the current state) and **T-C-matched+breaks=total** (reconciliation loses or double-counts no paisa). The rest cover replay, late events, dedup, sequence monotonicity, break classification, completeness counts, the daily gate, control totals, restatement, failure injection, and the partner-snapshot truncation guard and diff.
+The full plan is in [test-plan.md](test-plan.md): 14 tests grouped by question (latest state, every paisa, completeness, running it), each naming the mistake it catches. Six are written as code, including the two that matter most: the ordering-guard unit tests (arrival order and duplicates never change the current state) and the balance test (matched + breaks = total on both sides, exact paise).
 
 ## 13. Honesty
 

@@ -1,27 +1,40 @@
 # Test Plan — Lakehouse Data Platform
 
-> Companion to [design.md](design.md). For each guarantee: what we assert, and **how the test would fail if the design were wrong**. The two tests marked *real code* are written in full (see `tests/`); the rest are specified here.
+> Companion to [design.md](design.md). Each test names the mistake it exists to catch: if the design were wrong, this is the test that turns red.
+> ✅ = written as code in `code/dbt/` · 📋 = specified here, to be written
 
-| ID | Guarantee | Assertion | Fails if the design were wrong because | Level | Automated? |
-|---|---|---|---|---|---|
-| T-B-permutation (real code) | Current state = highest sequence | All arrival orders with duplicates give identical state | Ordering used time or arrival order | dbt unit tests (3 cases in `_silver_lending.yml`) | Yes (CI) |
-| T-B-replay | Idempotent re-runs | Running a batch twice leaves tables unchanged | The merge double-applies | Integration (dbt) | Yes |
-| T-B-late-older | No regression | An older event after a newer one leaves state unchanged | The guard is missing or the `>` wrong | Unit | Yes |
-| T-B-dup-batch | Dedup | Duplicates in one batch apply once | Dedup only looks at the target | Unit | Yes |
-| T-B-sequence-monotone | Source sequence | Sequence never decreases per entity in Silver | A service did not bump under lock | dbt test | Yes |
-| T-C-matched+breaks=total (real code) | No paisa unaccounted for | matched + breaks = total on both sides, exact paise and counts | Matching drops or double-counts rows | SQL test (dbt) | Yes |
-| T-C-cancel | Errors do not hide | Missing 500 + duplicate 500 gives two breaks | Totals-only logic | SQL test on seed data | Yes |
-| T-C-classes | Every break classified | One seeded case per class lands in its class | A class is missing or mis-assigned | SQL test | Yes |
-| T-A-count-audit | Completeness | Counts match Kafka → S3 → Bronze → Silver per hour | A hop drops or duplicates | dbt test | Yes |
-| T-A-gate | No partial day published | With one partner file missing, daily Gold excludes the day | Gate ignores the file ledger | Integration | Yes |
-| T-A-control-total | File integrity | `loaded + rejected = trailer rows`, paise = trailer total | Bad file loads silently | Load check | Yes |
-| T-OPS-restate | Corrections visible | Late data in an open month writes `ops.restatements`; in a closed month leaves `finance_close` unchanged | Silent overwrite | Integration | Planned |
-| T-OPS-failure | No partial writes | Kill a run mid-way; next run completes with no gaps or duplicates | Truncate-style staging | Fault injection | Manual first |
-| T-P-truncated-snapshot | A cut-off partner file never deletes records | A vendor snapshot with 40% of yesterday's rows fails the guard; `dbt snapshot` does not run; no record is marked REMOVED | The diff ran on any file, so a truncated file looked like millions of deletions | dbt singular test (`assert_partner_snapshot_not_truncated`) gating the snapshot | Yes |
-| T-P-diff | Only real changes flow downstream | Re-sending an identical snapshot creates no new versions; one changed amount creates exactly one new version; a key missing from a complete snapshot is invalidated once | The diff used file arrival instead of a row hash, or deletes were applied unguarded | dbt snapshot on seed data | Yes |
+## B — Is each record's latest state right?
 
-**Why these two are written as code:** they sit exactly where the guarantees of the two deep dives live.
-- **T-B-permutation:** the ordering guard must give the same final state for every arrival order, with duplicates.
-- **T-C-matched+breaks=total:** reconciliation must not lose or double-count a single paisa.
+| # | We check that… | It fails if… | Status |
+|:-:|---|---|:-:|
+| 1 | Events arriving **late, out of order or twice** never change the final state: a late older event is ignored, a newer one wins, and 9, 8, 9 in one batch ends at 9 | the guard ordered by time or arrival, or was missing | ✅ 3 dbt unit tests, `_silver_lending.yml` |
+| 2 | History holds **each event exactly once** | dedup broke | ✅ `unique` on `event_id` |
+| 3 | Every loan's current state is the **highest version in its history** | the guard let an older event win, or a service skipped its version bump | ✅ `assert_current_matches_latest_history.sql` |
+| 4 | Running the same batch **twice** changes nothing | a rerun double-applies | 📋 |
 
-If either were wrong, a reviewer would see money or state silently drift, and these tests turn red first.
+## C — Does every paisa match?
+
+| # | We check that… | It fails if… | Status |
+|:-:|---|---|:-:|
+| 5 | For every vendor and day, on **both sides**: **matched + breaks = total**, exact to the paisa and in counts | matching dropped or double-counted an item | ✅ `assert_reconciliation_balances.sql` |
+| 6 | A missing ₹5 and a duplicate ₹5 show up as **two breaks**, not "balanced" | we compared totals only | 📋 seed data |
+| 7 | One seeded example per break type lands in **its own class** | a class is missing or mislabelled | 📋 seed data |
+| 8 | A **cut-off partner file** is held and **deletes nothing** | the snapshot compared any file, so missing rows looked like deletions | ✅ `partner_snapshot_approval.sql` + alert test |
+| 9 | An **identical re-sent file** creates no new versions; one changed amount creates exactly one | changes were detected by file arrival, not by row content | 📋 seed data |
+
+## A — Is the data complete and current?
+
+| # | We check that… | It fails if… | Status |
+|:-:|---|---|:-:|
+| 10 | Hourly counts match at every hop: Kafka → S3 → Bronze → Silver | a hop dropped or duplicated data | 📋 |
+| 11 | With one partner file missing, the day is **not published** to finance | the gate ignored the missing file | 📋 |
+| 12 | Each partner file matches its **control trailer** (rows and paise) | a bad file loaded silently | ✅ in `partner_snapshot_approval.sql` (rows); 📋 paise |
+
+## Running it
+
+| # | We check that… | It fails if… | Status |
+|:-:|---|---|:-:|
+| 13 | Late data in an **open** month restates the day and logs it; in a **closed** month, finance figures stay frozen | a correction silently overwrote a reported number | 📋 |
+| 14 | A run **killed halfway** leaves no gaps or duplicates after the next run | a step wasn't safe to repeat | 📋 fault injection |
+
+**Why tests 1 and 5 matter most:** they sit exactly where the two hard guarantees live. If the ordering guard or the reconciliation were wrong, state or money would drift silently, and these turn red first.

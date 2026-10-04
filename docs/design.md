@@ -193,6 +193,7 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 **Tests.**
 - **dbt unit tests** in `_silver_lending.yml` (test 1 in the test plan): a late older event never overwrites newer state; a newer event replaces it; sequences 9, 8, 9 in one batch apply once at 9. `assert_current_matches_latest_history.sql` checks every loan's current sequence equals its highest in history.
 - dbt tests: `unique` and `not_null` on `event_id`, and unique `loan_id` in current state.
+- Also in the test plan: replaying a batch twice changes nothing.
 
 ## 9. Deep dive 2 — C: exact paise reconciliation
 
@@ -216,7 +217,8 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 **Where it lives.** `code/dbt/models/silver/shared/` (`silver_money_movements.sql`, `silver_partner_records.sql`, `silver_partner_record_changes.sql`), the partner snapshot and approval models, and `code/dbt/models/gold/finance/fct_reconciliation_items.sql` (the matching engine), with `fct_reconciliation_breaks.sql` and `fct_reconciliation_daily.sql`.
 
 **Tests.**
-- `code/dbt/tests/assert_reconciliation_balances.sql` (test 4 in the test plan): per vendor and day, on both sides, matched paise + break paise = total paise, and the same for counts. It returns rows only when the identity fails.
+- `code/dbt/tests/assert_reconciliation_balances.sql` (test 5 in the test plan): per vendor and day, on both sides, matched paise + break paise = total paise, and the same for counts. It returns rows only when the identity fails.
+- Also in the test plan: one seeded example per break type lands in its class; a cancelling pair (missing 500 paise, duplicate 500 paise) gives two breaks, not zero.
 
 ## 10. Living with it
 
@@ -240,7 +242,7 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 
 ## 12. Test plan
 
-The full plan is in [test-plan.md](test-plan.md): six tests, all written as code, each naming the mistake it catches. The two that matter most are the ordering-guard unit tests (arrival order and duplicates never change the current state) and the balance test (matched + breaks = total on both sides, exact paise).
+The full plan is in [test-plan.md](test-plan.md): 14 tests grouped by question, each naming the mistake it catches. Six are already written as code (marked ✅), including the two that matter most: the ordering-guard unit tests (arrival order and duplicates never change the current state) and the balance test (matched + breaks = total on both sides, exact paise).
 
 ## 13. Honesty
 

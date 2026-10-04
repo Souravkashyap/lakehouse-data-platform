@@ -1,0 +1,81 @@
+version: 2
+
+models:
+  - name: silver_lending_loan_events
+    description: Append-only history of loan events, one row per event_id (dedup window 8 days). Design section 8.
+    columns:
+      - name: event_id
+        data_tests: [unique, not_null]
+      - name: amount_paise
+        description: Integer paise (NUMBER(38,0)); never float.
+        data_tests:
+          - not_null:
+              config:
+                where: "event_type in ('LoanDisbursed', 'EmiPaid')"
+
+  - name: silver_lending_loans_current
+    description: Current state per loan, protected by the ordering guard (highest source sequence wins). Design section 8.
+    columns:
+      - name: loan_id
+        data_tests: [unique, not_null]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['APPLIED', 'APPROVED', 'DISBURSED', 'REPAYING', 'OVERDUE', 'CLOSED', 'WRITTEN_OFF']
+
+# Ordering-guard tests T-B-late-older / T-B-dup-batch / T-B-permutation (reduced) from docs/test-plan.md.
+unit_tests:
+  - name: late_older_event_never_overwrites_newer_state
+    description: A late event with a lower sequence must not regress state; only the new loan L2 is written.
+    model: silver_lending_loans_current
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: ref('silver_lending_loan_events')
+        rows:
+          - {loan_id: L1, sequence: 6, event_type: EmiPaid, status: OVERDUE, outstanding_principal_paise: 1000, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 40, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
+          - {loan_id: L2, sequence: 1, event_type: EmiPaid, status: APPLIED, outstanding_principal_paise: 1000, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 0, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
+      - input: this
+        rows:
+          - {loan_id: L1, sequence: 7, status: REPAYING, last_loaded_at: '2026-10-03 10:00:00'}
+    expect:
+      rows:
+        - {loan_id: L2, sequence: 1, status: APPLIED}
+
+  - name: newer_event_replaces_state
+    description: A higher sequence replaces the stored state.
+    model: silver_lending_loans_current
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: ref('silver_lending_loan_events')
+        rows:
+          - {loan_id: L1, sequence: 8, event_type: EmiPaid, status: CLOSED, outstanding_principal_paise: 0, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 0, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
+      - input: this
+        rows:
+          - {loan_id: L1, sequence: 7, status: REPAYING, last_loaded_at: '2026-10-03 10:00:00'}
+    expect:
+      rows:
+        - {loan_id: L1, sequence: 8, status: CLOSED}
+
+  - name: duplicates_and_out_of_order_in_one_batch_apply_once
+    description: Sequences 9, 8, 9 (duplicate) in one batch yield a single row at sequence 9.
+    model: silver_lending_loans_current
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: ref('silver_lending_loan_events')
+        rows:
+          - {loan_id: L1, sequence: 9, event_type: EmiPaid, status: CLOSED, outstanding_principal_paise: 0, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 0, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
+          - {loan_id: L1, sequence: 8, event_type: EmiPaid, status: REPAYING, outstanding_principal_paise: 1000, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 0, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
+          - {loan_id: L1, sequence: 9, event_type: EmiPaid, status: CLOSED, outstanding_principal_paise: 0, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 0, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
+      - input: this
+        rows:
+          - {loan_id: L1, sequence: 7, status: REPAYING, last_loaded_at: '2026-10-03 10:00:00'}
+    expect:
+      rows:
+        - {loan_id: L1, sequence: 9, status: CLOSED}

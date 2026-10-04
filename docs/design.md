@@ -1,6 +1,6 @@
 # Lakehouse Data Platform for Lending, Insurance and Recharge — Design Doc
 
-*Draft for the author's review. Code and tests listed in the Appendix are planned, not yet written.*
+*Draft for the author's review. Code and tests are in `code/` (see the Appendix).*
 
 ## 0. Summary
 
@@ -188,10 +188,10 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 
 **Residual risk.** A duplicate more than 8 days late is not removed in Silver; the daily reconciliation (§9) catches it.
 
-**Where it lives.** `code/outbox/outbox_write_example.sql` (version bump and outbox insert); `code/dbt/models/silver/lending/` (`stg_lending_events.sql`, `silver_lending_loan_events.sql` for history and dedup, `silver_lending_loans_current.sql` for the ordering guard). Lending is the worked example; other units follow the same pattern.
+**Where it lives.** The service-side outbox write (version bump + outbox insert in one transaction) is described above, not coded. `code/dbt/models/silver/lending/` holds `stg_lending_events.sql`, `silver_lending_loan_events.sql` (append-only history, dedup) and `silver_lending_loans_current.sql` (the ordering guard). Lending is the worked example; other units follow the same pattern.
 
 **Tests.**
-- `tests/test_ordering_guard.py` (T-B-permutation, real code): for a generated event set per entity, every arrival order, with duplicates, gives the same final state.
+- **dbt unit tests** in `_silver_lending.yml` (T-B-permutation, reduced; real code): a late older event never overwrites newer state; a newer event replaces it; sequences 9, 8, 9 in one batch apply once at 9. `assert_current_matches_latest_history.sql` checks every loan's current sequence equals its highest in history.
 - Replaying a batch twice changes nothing; duplicates in one batch apply once; a late, older event does not regress state.
 - dbt tests: `unique` and `not_null` on `event_id`, unique entity ID in `current`, sequence never decreases.
 
@@ -214,10 +214,10 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 
 **Guarantee.** For every partner and business day, every internal money movement and every partner record is either matched exactly in paise or listed as a classified break with an owner; matched + breaks equals the total on both sides, so no paisa is unaccounted for.
 
-**Where it lives.** `code/dbt/models/silver/shared/silver_money_movements.sql`, `silver_partner_records.sql`; `code/dbt/models/gold/finance/fct_reconciliation_daily.sql`, `fct_reconciliation_breaks.sql`.
+**Where it lives.** `code/dbt/models/silver/shared/` (`silver_money_movements.sql`, `silver_partner_records.sql`, `silver_partner_record_changes.sql`), the partner snapshot and approval models, and `code/dbt/models/gold/finance/fct_reconciliation_items.sql` (the matching engine), with `fct_reconciliation_breaks.sql` and `fct_reconciliation_daily.sql`.
 
 **Tests.**
-- `tests/dbt/assert_reconciliation_balances.sql` (T-C-matched+breaks=total, real code): per vendor and day, on both sides, matched paise + break paise = total paise, and the same for counts. It returns rows only when the identity fails.
+- `code/dbt/tests/assert_reconciliation_balances.sql` (T-C-matched+breaks=total, real code): per vendor and day, on both sides, matched paise + break paise = total paise, and the same for counts. It returns rows only when the identity fails.
 - Seeded cases, one per break class, each must land in its class.
 - A cancelling pair (missing 500 paise, duplicate 500 paise) must produce two breaks, not zero.
 
@@ -243,7 +243,7 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 
 ## 12. Test plan
 
-The full plan is in [test-plan.md](test-plan.md): 15 tests, each stating what it asserts and how it would fail if the design were wrong. Two are real code: **T-B-permutation** (every arrival order and duplicate pattern gives the same current state) and **T-C-matched+breaks=total** (reconciliation loses or double-counts no paisa). The rest cover replay, late events, dedup, sequence monotonicity, break classification, completeness counts, the daily gate, control totals, restatement, failure injection, and the partner-snapshot truncation guard and diff.
+The full plan is in [test-plan.md](test-plan.md): 15 tests, each stating what it asserts and how it would fail if the design were wrong. Two are real code: **T-B-permutation** (as three dbt unit tests: arrival order and duplicates never change the current state) and **T-C-matched+breaks=total** (reconciliation loses or double-counts no paisa). The rest cover replay, late events, dedup, sequence monotonicity, break classification, completeness counts, the daily gate, control totals, restatement, failure injection, and the partner-snapshot truncation guard and diff.
 
 ## 13. Honesty
 
@@ -265,17 +265,23 @@ The full plan is in [test-plan.md](test-plan.md): 15 tests, each stating what it
 
 ## Appendix: code & tests index
 
-*Planned; none of this code is written yet.*
+*Written as reviewable code (dbt-snowflake 1.10 parses it cleanly: 11 models, 1 snapshot, 13 data tests, 3 unit tests); not run against Snowflake. The service-side outbox write (§8) is described, not coded.*
 
-| Path | Proves | Deep dive |
+| Path (under `code/`) | Proves | Deep dive |
 |---|---|---|
-| `code/outbox/outbox_write_example.sql` | Version bump and outbox insert, one transaction | B |
-| `code/dbt/models/silver/lending/stg_lending_events.sql` | Raw rename and cast | B |
-| `code/dbt/models/silver/lending/silver_lending_loan_events.sql` | History with dedup on `event_id` | B |
-| `code/dbt/models/silver/lending/silver_lending_loans_current.sql` | Ordering guard | B |
-| `code/dbt/models/silver/shared/silver_money_movements.sql` | Internal money in one shape | C |
-| `code/dbt/models/silver/shared/silver_partner_records.sql` | Partner side in the same shape | C |
-| `code/dbt/models/gold/finance/fct_reconciliation_daily.sql` | Matching and daily status | C |
-| `code/dbt/models/gold/finance/fct_reconciliation_breaks.sql` | Classified breaks | C |
-| `tests/dbt/assert_reconciliation_balances.sql` | matched + breaks = total, exact paise | C |
-| `tests/test_ordering_guard.py` | Permutation and replay | B |
+| `dbt/models/staging/lending/stg_lending_events.sql` | Payload parsing; money as integer paise; UTC | B |
+| `dbt/models/silver/lending/silver_lending_loan_events.sql` | Append-only history; new rows picked up by load time; dedup on `event_id` (8-day window) | B |
+| `dbt/models/silver/lending/silver_lending_loans_current.sql` | **The ordering guard**: an event is applied only if its sequence is higher | B |
+| `dbt/models/silver/lending/_silver_lending.yml` | Schema tests + **3 dbt unit tests** for the guard (late older event, newer event, duplicates/out-of-order in one batch) | B |
+| `dbt/tests/assert_current_matches_latest_history.sql` | Current state always equals the highest sequence in history | B |
+| `dbt/models/staging/partners/stg_partner_lending_nbfc_017.sql` | Vendor mapping; rupee text → exact paise; NULL-safe row hash | C |
+| `dbt/models/staging/partners/partner_snapshot_approval.sql` | Truncation guard as data: only files matching their trailer and within ±10% rows are approved | C |
+| `dbt/snapshots/snap_partner_records.sql` | Daily diff of the full snapshot (SCD2); reads only approved files | C |
+| `dbt/models/silver/shared/silver_money_movements.sql`, `silver_partner_records.sql`, `silver_partner_record_changes.sql` | Both sides in one shape; partner NEW / CHANGED / REMOVED per day | C |
+| `dbt/models/gold/finance/fct_reconciliation_items.sql` | **The matching engine**: exact, then mutual-best secondary, then every leftover classified; window keyed to the run's date | C |
+| `dbt/models/gold/finance/fct_reconciliation_breaks.sql`, `fct_reconciliation_daily.sql` | Breaks with owner and age; RECONCILED / BREAKS_OPEN per unit, vendor and day | C |
+| `dbt/tests/assert_reconciliation_balances.sql` | **matched + breaks = total, exact paise and counts, on both sides**, recomputed independently | C |
+| `dbt/tests/assert_partner_snapshot_not_truncated.sql` | Pages vendor ops when the newest file is held | C |
+| `dbt/macros/require_run_date.sql` | Fails fast without the run's logical date (no `current_date` fallback) | B, C |
+| `airflow/dags/lakehouse_15min.py` | COPY → dbt Silver per unit → shared Silver → app push; source freshness | Ops |
+| `airflow/dags/lakehouse_partner_daily.py` | Full file + trailer COPY → guard → snapshot → prune; finance build gated on completeness | Ops |

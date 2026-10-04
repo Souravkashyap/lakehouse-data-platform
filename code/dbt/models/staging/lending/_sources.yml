@@ -1,0 +1,59 @@
+version: 2
+
+sources:
+  - name: bronze
+    description: Raw outbox events landed by COPY INTO from the S3 sink. One table per business unit.
+    database: "{{ env_var('BRONZE_DATABASE', 'lakehouse') }}"
+    schema: "{{ env_var('BRONZE_SCHEMA', 'bronze') }}"
+    loaded_at_field: _loaded_at
+    freshness:                       # the silent-stall alarm
+      warn_after: {count: 30, period: minute}
+      error_after: {count: 60, period: minute}
+    tables:
+      - name: lending_events
+        columns:
+          - name: topic
+          - name: kafka_partition
+          - name: kafka_offset
+          - name: kafka_ts
+          - name: event_id
+          - name: event_type
+          - name: aggregate_id
+          - name: sequence
+          - name: occurred_at
+          - name: payload
+            description: VARIANT. {customer_id, data{amount_paise, payment_ref, lender_id}, state{...full entity state}}
+          - name: _file_name
+          - name: _file_row
+          - name: _loaded_at
+
+  - name: bronze_partner
+    description: One vendor's raw file rows, every column text. Parsing happens in staging.
+    database: "{{ env_var('BRONZE_DATABASE', 'lakehouse') }}"
+    schema: "{{ env_var('BRONZE_PARTNER_SCHEMA', 'bronze_partner') }}"
+    tables:
+      - name: lending_nbfc_017
+        columns:
+          - name: vendor_txn_id
+          - name: our_payment_ref
+          - name: our_customer_id
+          - name: our_loan_id
+          - name: snapshot_date
+            description: YYYY-MM-DD. Partners send a FULL daily snapshot, so this is the file's day.
+          - name: txn_date
+            description: YYYY-MM-DD
+          - name: amount_inr
+            description: Text such as "12500.00"
+          - name: line_type
+          - name: txn_status
+          - name: _file_name
+          - name: _file_row
+          - name: _file_loaded_at
+          - name: _loaded_at
+      - name: lending_nbfc_017_control
+        description: Control totals from the file trailer, one row per vendor and snapshot_date.
+        columns:
+          - name: vendor
+          - name: snapshot_date
+          - name: trailer_rows
+          - name: trailer_paise

@@ -1,0 +1,43 @@
+name: lakehouse_platform
+version: "1.0.0"
+config-version: 2
+profile: lakehouse
+
+model-paths: ["models"]
+test-paths: ["tests"]
+snapshot-paths: ["snapshots"]
+
+vars:
+  run_date: null   # Airflow passes the run's logical date ({{ ds }}); never the wall clock
+
+models:
+  lakehouse_platform:
+    +on_schema_change: fail   # applies to incrementals: a drifting schema stops the run
+    staging:
+      +materialized: view
+      lending:
+        +tags: ["lending"]
+      partners:
+        +tags: ["partner"]   # kept off the 15-minute DAG's tag:lending selection
+    # Snowflake-managed Iceberg tables in our own S3 (verify: dbt-snowflake >= 1.9 Iceberg support)
+    silver:
+      +table_format: iceberg
+      +external_volume: lakehouse_s3_volume
+      lending:
+        +tags: ["lending"]
+        +meta:
+          owner: lending-data
+          retention_years: 5
+      shared:
+        +tags: ["shared"]
+        +meta:
+          owner: data-platform
+          retention_years: 5
+    gold:
+      +table_format: iceberg
+      +external_volume: lakehouse_s3_volume
+      finance:
+        +tags: ["finance"]
+        +meta:
+          owner: finance-data
+          retention_years: 5

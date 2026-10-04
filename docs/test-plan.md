@@ -4,7 +4,7 @@
 
 | ID | Guarantee | Assertion | Fails if the design were wrong because | Level | Automated? |
 |---|---|---|---|---|---|
-| T-B-permutation (real code) | Current state = highest sequence | All arrival orders with duplicates give identical state | Ordering used time or arrival order | Unit/property (pytest) | Yes (CI) |
+| T-B-permutation (real code) | Current state = highest sequence | All arrival orders with duplicates give identical state | Ordering used time or arrival order | dbt unit tests (3 cases in `_silver_lending.yml`) | Yes (CI) |
 | T-B-replay | Idempotent re-runs | Running a batch twice leaves tables unchanged | The merge double-applies | Integration (dbt) | Yes |
 | T-B-late-older | No regression | An older event after a newer one leaves state unchanged | The guard is missing or the `>` wrong | Unit | Yes |
 | T-B-dup-batch | Dedup | Duplicates in one batch apply once | Dedup only looks at the target | Unit | Yes |

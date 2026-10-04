@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: fct_reconciliation_items
+    description: Every internal money movement and every partner TRANSACTION line, exactly once, with a result. Design section 9.
+    columns:
+      - name: item_key
+        description: side || ':' || item_id
+        data_tests: [unique, not_null]
+      - name: result
+        data_tests:
+          - accepted_values:
+              arguments:
+                values:
+                - MATCHED_EXACT
+                - MATCHED_SECONDARY
+                - AMOUNT_DIFFERS
+                - STATUS_DISAGREES
+                - DUPLICATE
+                - TIMING
+                - MISSING_AT_PARTNER
+                - MISSING_INTERNALLY
+
+  - name: fct_reconciliation_breaks
+    description: One row per unmatched or disagreeing item, with owner and age.
+
+  - name: fct_reconciliation_daily
+    description: RECONCILED or BREAKS_OPEN per unit, vendor, day and side, in exact paise.
+    columns:
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['RECONCILED', 'BREAKS_OPEN']

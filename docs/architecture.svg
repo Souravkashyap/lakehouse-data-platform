@@ -1,0 +1,145 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" width="1600" height="1000" font-family="Inter, Segoe UI, Helvetica, Arial, sans-serif">
+<title>Lakehouse Data Platform — Architecture</title>
+<defs>
+<filter id="sh" x="-15%" y="-15%" width="130%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0F172A" flood-opacity="0.12"/></filter>
+<marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto"><path d="M1.5 1.5 L8.5 5 L1.5 8.5 Z" fill="#334155" stroke="#334155" stroke-width="1.5" stroke-linejoin="round"/></marker>
+</defs>
+<rect width="1600" height="1000" fill="#F7F9FC"/>
+<text x="40" y="52" font-size="30" font-weight="700" fill="#0F172A">Lakehouse Data Platform — Architecture</text>
+<text x="40" y="79" font-size="13" fill="#64748B" xml:space="preserve">Lending · Insurance · Recharge   |   10k events/s peak · 500M partner rows/day · 50M customers · 5-year history · money in integer paise</text>
+<rect x="40" y="100" width="210" height="710" rx="18" fill="#64748B" fill-opacity="0.09" stroke="#64748B" stroke-opacity="0.45" stroke-width="1"/>
+<text x="58" y="128" font-size="15" font-weight="700" letter-spacing="1.5" fill="#475569">SOURCES</text>
+<line x1="58" y1="140" x2="232" y2="140" stroke="#64748B" stroke-opacity="0.5" stroke-width="2" stroke-linecap="round"/>
+<rect x="280" y="100" width="250" height="710" rx="18" fill="#F59E0B" fill-opacity="0.09" stroke="#F59E0B" stroke-opacity="0.45" stroke-width="1"/>
+<text x="298" y="128" font-size="15" font-weight="700" letter-spacing="1.5" fill="#B45309">CAPTURE &amp; TRANSPORT</text>
+<line x1="298" y1="140" x2="512" y2="140" stroke="#F59E0B" stroke-opacity="0.5" stroke-width="2" stroke-linecap="round"/>
+<rect x="560" y="100" width="160" height="710" rx="18" fill="#10B981" fill-opacity="0.09" stroke="#10B981" stroke-opacity="0.45" stroke-width="1"/>
+<text x="578" y="128" font-size="15" font-weight="700" letter-spacing="1.5" fill="#047857">DATA LAKE</text>
+<line x1="578" y1="140" x2="702" y2="140" stroke="#10B981" stroke-opacity="0.5" stroke-width="2" stroke-linecap="round"/>
+<rect x="810" y="100" width="370" height="710" rx="18" fill="#0EA5E9" fill-opacity="0.09" stroke="#0EA5E9" stroke-opacity="0.45" stroke-width="1"/>
+<text x="828" y="128" font-size="15" font-weight="700" letter-spacing="1.5" fill="#0369A1">SNOWFLAKE LAKEHOUSE</text>
+<line x1="828" y1="140" x2="1162" y2="140" stroke="#0EA5E9" stroke-opacity="0.5" stroke-width="2" stroke-linecap="round"/>
+<rect x="1210" y="100" width="350" height="710" rx="18" fill="#8B5CF6" fill-opacity="0.09" stroke="#8B5CF6" stroke-opacity="0.45" stroke-width="1"/>
+<text x="1228" y="128" font-size="15" font-weight="700" letter-spacing="1.5" fill="#6D28D9">CONSUMERS</text>
+<line x1="1228" y1="140" x2="1542" y2="140" stroke="#8B5CF6" stroke-opacity="0.5" stroke-width="2" stroke-linecap="round"/>
+<rect x="55" y="148" width="180" height="120" rx="13" fill="#fff" stroke="#64748B" stroke-width="1.5" filter="url(#sh)"/>
+<text x="71" y="184" font-size="17" font-weight="600" fill="#0F172A">Service databases</text>
+<text x="71" y="205" font-size="13" fill="#475569">Postgres · MySQL</text>
+<text x="71" y="225" font-size="13" fill="#475569">outbox table</text>
+<rect x="55" y="535" width="180" height="86" rx="13" fill="#fff" stroke="#64748B" stroke-width="1.5" filter="url(#sh)"/>
+<text x="71" y="563" font-size="16" font-weight="600" fill="#0F172A">Partner files</text>
+<text x="71" y="584" font-size="13" fill="#475569">30–50 vendors</text>
+<text x="71" y="601" font-size="13" fill="#475569">~500M rows/day</text>
+<rect x="55" y="641" width="180" height="60" rx="13" fill="#fff" stroke="#64748B" stroke-width="1.5" filter="url(#sh)"/>
+<text x="71" y="667" font-size="16" font-weight="600" fill="#0F172A">Third-party APIs</text>
+<text x="71" y="688" font-size="13" fill="#475569">scheduled pull</text>
+<rect x="55" y="721" width="180" height="60" rx="13" fill="#fff" stroke="#64748B" stroke-width="1.5" filter="url(#sh)"/>
+<text x="71" y="747" font-size="16" font-weight="600" fill="#0F172A">Ops spreadsheets</text>
+<text x="71" y="768" font-size="13" fill="#475569">reference data</text>
+<rect x="295" y="165" width="220" height="86" rx="13" fill="#fff" stroke="#F59E0B" stroke-width="1.5" filter="url(#sh)"/>
+<text x="311" y="193" font-size="16" font-weight="600" fill="#0F172A">Debezium</text>
+<text x="311" y="214" font-size="13" fill="#475569">log-based CDC</text>
+<text x="311" y="231" font-size="13" fill="#475569">outbox router</text>
+<rect x="295" y="291" width="220" height="86" rx="13" fill="#fff" stroke="#F59E0B" stroke-width="1.5" filter="url(#sh)"/>
+<text x="311" y="319" font-size="16" font-weight="600" fill="#0F172A">Kafka (Amazon MSK)</text>
+<text x="311" y="340" font-size="13" fill="#475569">6 topics · key = entity ID</text>
+<text x="311" y="357" font-size="13" fill="#475569">7 days retention</text>
+<rect x="295" y="417" width="220" height="64" rx="13" fill="#fff" stroke="#F59E0B" stroke-width="1.5" filter="url(#sh)"/>
+<text x="311" y="444" font-size="16" font-weight="600" fill="#0F172A">Kafka Connect S3 sink</text>
+<text x="311" y="465" font-size="13" fill="#475569">Parquet · every 5 min</text>
+<rect x="295" y="535" width="220" height="86" rx="13" fill="#fff" stroke="#F59E0B" stroke-width="1.5" filter="url(#sh)"/>
+<text x="311" y="563" font-size="16" font-weight="600" fill="#0F172A">SFTP landing + ledger</text>
+<text x="311" y="584" font-size="13" fill="#475569">checksums</text>
+<text x="311" y="601" font-size="13" fill="#475569">control totals</text>
+<rect x="572" y="150" width="136" height="630" rx="13" fill="#fff" stroke="#10B981" stroke-width="1.5" filter="url(#sh)"/>
+<text x="640" y="420" font-size="16" font-weight="600" fill="#0F172A" text-anchor="middle">S3 raw zone</text>
+<text x="640" y="440" font-size="16" font-weight="600" fill="#0F172A" text-anchor="middle">(Bronze)</text>
+<text x="640" y="474" font-size="13" font-weight="400" fill="#475569" text-anchor="middle">Parquet</text>
+<text x="640" y="493" font-size="13" font-weight="400" fill="#475569" text-anchor="middle">by arrival hour</text>
+<text x="640" y="512" font-size="13" font-weight="400" fill="#475569" text-anchor="middle">immutable</text>
+<text x="640" y="531" font-size="13" font-weight="400" fill="#475569" text-anchor="middle">5 years</text>
+<rect x="830" y="160" width="310" height="100" rx="14" fill="#fff" stroke="#0EA5E9" stroke-width="1.5" filter="url(#sh)"/>
+<circle cx="852" cy="187" r="6" fill="#B45309"/>
+<text x="868" y="193" font-size="18" font-weight="700" fill="#0F172A">Bronze</text>
+<text x="846" y="222" font-size="13" fill="#475569">native tables per unit · 90 days</text>
+<rect x="830" y="340" width="310" height="110" rx="14" fill="#fff" stroke="#0EA5E9" stroke-width="1.5" filter="url(#sh)"/>
+<circle cx="852" cy="367" r="6" fill="#94A3B8"/>
+<text x="868" y="373" font-size="18" font-weight="700" fill="#0F172A">Silver</text>
+<text x="846" y="402" font-size="13" fill="#475569">Iceberg in our S3 · 2–5 years</text>
+<rect x="830" y="534" width="310" height="100" rx="14" fill="#fff" stroke="#0EA5E9" stroke-width="1.5" filter="url(#sh)"/>
+<circle cx="852" cy="561" r="6" fill="#EAB308"/>
+<text x="868" y="567" font-size="18" font-weight="700" fill="#0F172A">Gold</text>
+<text x="846" y="596" font-size="13" fill="#475569">Iceberg · per consumer</text>
+<rect x="984" y="354" width="142" height="26" rx="13" fill="#4F46E5"/>
+<text x="1055.0" y="371.5" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">B · ordering guard</text>
+<rect x="984" y="548" width="142" height="26" rx="13" fill="#0F766E"/>
+<text x="1055.0" y="565.5" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">C · reconciliation</text>
+<rect x="830" y="689" width="310" height="46" rx="12" fill="#fff" stroke="#0EA5E9" stroke-width="1.5" stroke-dasharray="5 4" filter="url(#sh)"/>
+<text x="985" y="717" font-size="13" font-weight="600" fill="#0F172A" text-anchor="middle">Semantic layer → Analysts (BI · questions)</text>
+<path d="M985 260 V340" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M985 450 V534" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<rect x="1225" y="160" width="320" height="80" rx="13" fill="#fff" stroke="#8B5CF6" stroke-width="1.5" filter="url(#sh)"/>
+<text x="1241" y="192" font-size="16" font-weight="600" fill="#0F172A">Analysts</text>
+<text x="1241" y="213" font-size="13" fill="#475569">BI + plain-English questions</text>
+<rect x="1225" y="288" width="320" height="80" rx="13" fill="#fff" stroke="#8B5CF6" stroke-width="1.5" filter="url(#sh)"/>
+<text x="1241" y="320" font-size="16" font-weight="600" fill="#0F172A">Finance</text>
+<text x="1241" y="341" font-size="13" fill="#475569">reconciled by 09:00 · month close</text>
+<rect x="1225" y="416" width="320" height="80" rx="13" fill="#fff" stroke="#8B5CF6" stroke-width="1.5" filter="url(#sh)"/>
+<text x="1241" y="448" font-size="16" font-weight="600" fill="#0F172A">Data scientists</text>
+<text x="1241" y="469" font-size="13" fill="#475569">features · Snowpark / Spark</text>
+<rect x="1225" y="672" width="320" height="80" rx="13" fill="#fff" stroke="#8B5CF6" stroke-width="1.5" filter="url(#sh)"/>
+<text x="1241" y="704" font-size="16" font-weight="600" fill="#0F172A">Auditors</text>
+<text x="1241" y="725" font-size="13" fill="#475569">lineage · 5-year raw</text>
+<rect x="1230" y="554" width="88" height="60" rx="13" fill="#fff" stroke="#8B5CF6" stroke-width="1.5" filter="url(#sh)"/>
+<text x="1274" y="580" font-size="14" font-weight="600" fill="#0F172A" text-anchor="middle">DynamoDB</text><text x="1274" y="599" font-size="13" fill="#475569" text-anchor="middle">+ API</text>
+<rect x="1342" y="544" width="203" height="80" rx="13" fill="#fff" stroke="#8B5CF6" stroke-width="1.5" filter="url(#sh)"/>
+<text x="1358" y="576" font-size="16" font-weight="600" fill="#0F172A">Customer apps</text>
+<text x="1358" y="597" font-size="13" fill="#475569">offers · insights · ≤ 1 h</text>
+<path d="M235 208 H295" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M405 251 V291" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M405 377 V417" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M515 449 H572" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M235 578 H295" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M515 578 H572" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M235 671 H572" fill="none" stroke="#334155" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M235 751 H572" fill="none" stroke="#334155" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M708 210 H830" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M1140 584 H1230" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M1318 584 H1342" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M708 765 H1195 V738 H1225" fill="none" stroke="#334155" stroke-width="1.5" stroke-dasharray="6 4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<rect x="825" y="752" width="270" height="26" rx="13" fill="#fff" stroke="#CBD5E1" stroke-width="1"/>
+<text x="960" y="769.5" font-size="12" font-weight="600" fill="#334155" text-anchor="middle">read-only: raw 5 y · history · lineage</text>
+<path d="M1140 556 H1195 V456 H1225" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M1195 456 V328 H1225" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<path d="M1195 328 V200 H1225" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<circle cx="1195" cy="456" r="3.5" fill="#334155"/><circle cx="1195" cy="328" r="3.5" fill="#334155"/>
+<rect x="719.0" y="157.0" width="100" height="38" rx="14" fill="#fff" stroke="#CBD5E1" stroke-width="1"/>
+<text x="769" y="173" font-size="12" font-weight="600" fill="#334155" text-anchor="middle">COPY INTO</text>
+<text x="769" y="188" font-size="12" font-weight="600" fill="#334155" text-anchor="middle">every 15 min</text>
+<rect x="883.0" y="288.0" width="204" height="24" rx="12.0" fill="#fff" stroke="#CBD5E1" stroke-width="1"/>
+<text x="985" y="304.5" font-size="12" font-weight="600" fill="#334155" text-anchor="middle">dbt: dedup · order · conform</text>
+<rect x="897.0" y="480.0" width="176" height="24" rx="12.0" fill="#fff" stroke="#CBD5E1" stroke-width="1"/>
+<text x="985" y="496.5" font-size="12" font-weight="600" fill="#334155" text-anchor="middle">dbt: per-consumer marts</text>
+<rect x="1156.0" y="598.0" width="64" height="38" rx="14" fill="#fff" stroke="#CBD5E1" stroke-width="1"/>
+<text x="1188" y="614" font-size="12" font-weight="600" fill="#334155" text-anchor="middle">every</text>
+<text x="1188" y="629" font-size="12" font-weight="600" fill="#334155" text-anchor="middle">15 min</text>
+<rect x="40" y="828" width="1520" height="72" rx="18" fill="#94A3B8" fill-opacity="0.12" stroke="#94A3B8" stroke-opacity="0.5"/>
+<text x="60" y="860" font-size="15" font-weight="700" letter-spacing="1.5" fill="#475569">ORCHESTRATION</text><text x="60" y="880" font-size="15" font-weight="700" letter-spacing="1.5" fill="#475569">&amp; OPS</text>
+<rect x="240" y="846" width="330" height="36" rx="18" fill="#fff" stroke="#94A3B8" stroke-width="1.5" filter="url(#sh)"/>
+<text x="405.0" y="869" font-size="13" font-weight="600" fill="#0F172A" text-anchor="middle">Airflow (MWAA): one DAG every 15 min</text>
+<rect x="585" y="846" width="360" height="36" rx="18" fill="#fff" stroke="#94A3B8" stroke-width="1.5" filter="url(#sh)"/>
+<text x="765.0" y="869" font-size="13" font-weight="600" fill="#0F172A" text-anchor="middle">Monitoring: freshness · completeness · alerts</text>
+<rect x="960" y="846" width="280" height="36" rx="18" fill="#fff" stroke="#94A3B8" stroke-width="1.5" filter="url(#sh)"/>
+<text x="1100.0" y="869" font-size="13" font-weight="600" fill="#0F172A" text-anchor="middle">Lineage: dbt → OpenMetadata</text>
+<rect x="1255" y="846" width="290" height="36" rx="18" fill="#fff" stroke="#94A3B8" stroke-width="1.5" filter="url(#sh)"/>
+<text x="1400.0" y="869" font-size="13" font-weight="600" fill="#0F172A" text-anchor="middle">AWS Mumbai (ap-south-1)</text>
+<rect x="840" y="920" width="720" height="56" rx="14" fill="#fff" stroke="#E2E8F0"/>
+<rect x="860" y="935" width="30" height="26" rx="13" fill="#4F46E5"/>
+<text x="875.0" y="952.5" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">B</text>
+<text x="900" y="953" font-size="13" fill="#475569">B = correct latest state</text>
+<rect x="1090" y="935" width="30" height="26" rx="13" fill="#0F766E"/>
+<text x="1105.0" y="952.5" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">C</text>
+<text x="1130" y="953" font-size="13" fill="#475569">C = every paisa matches</text>
+<path d="M1320 948 H1362" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#ar)"/>
+<text x="1374" y="953" font-size="13" fill="#475569">solid arrow = data flow</text>
+</svg>

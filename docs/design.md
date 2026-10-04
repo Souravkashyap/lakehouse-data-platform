@@ -24,10 +24,12 @@ We build one data platform for lending, insurance and recharge. Each business wr
 | A10 | Data scientists need training and batch-scoring features. No online prediction. | Needs an online feature store. |
 | A11 | AWS Mumbai (`ap-south-1`); payment data must stay in India (RBI, 2018). | A second region is a larger design. |
 | A12 | Snowflake Enterprise edition, about $3 per credit. | Every Snowflake figure in §3 scales linearly. |
+| A13 | The brief's "event streams" are the services' business events, published through the outbox. Any service that produces to Kafka directly must use the same event envelope (`event_id`, entity ID, `sequence`, `occurred_at`) and the same topics. | Producers without a sequence lose the ordering guarantee in §8; their topics get dedup only. |
+| A14 | Business teams decide the Gold grains (hourly, daily, monthly, customer-level), the retention of their Silver and Gold tables, and the definitions of their metrics, through a short data contract. The platform team reviews each request for cost. | Without owners, metrics drift between teams (the brief's "inconsistent between teams"). |
 
 ## 2. Requirements, SLAs and non-goals
 
-**Must do:** land all sources in a lake and build Silver and Gold in an open table format in our own S3; keep 5 years of history (raw, finance and audit tables 5 years; other Silver and Gold 2–5 years by unit); show how complete and fresh each table is; meet the SLAs in A8; reproduce any reported number.
+**Must do:** land all sources in a lake and build Silver and Gold in an open table format in our own S3; keep 5 years of history (raw, finance, money and audit tables 5 years; other Silver and Gold kept per business-team requirement, 2–5 years by table and grain); show how complete and fresh each table is; meet the SLAs in A8; reproduce any reported number.
 
 **Must not do:** sit on a transaction's critical path; change a closed month silently; match money on "close" amounts.
 
@@ -44,12 +46,29 @@ We build one data platform for lending, insurance and recharge. Each business wr
 | S3 raw, 5 years | 65 GB/day × 1,825 days | ≈ 119 TB → ≈ $750–850/month at year 5 (tiered Standard, IA, Glacier IR) |
 | Kafka, 7 days | 2 MB/s × 86,400 s × 7 days × 3 replicas | ≈ 3.6 TB on brokers |
 | Snowflake Bronze, 90 days | 65 GB/day × 90 | ≈ 5.9 TB → ≈ $150–235/month |
-| Silver history | 5 years, if every unit keeps 5 | ≈ 100+ TB → ≈ $2.3–4k/month: the largest storage line |
+| Silver + Gold history (Iceberg in our S3, billed by AWS) | ~55 GB/day; up to 5 years if every team keeps 5 | ≈ 20 TB in year 1, ≈ 100 TB by year 5 → ≈ $0.5k → ≈ $2.5k/month at ~$25/TB: the largest storage line |
 | Loads | COPY: 96 runs/day × ~1.5 min on Small (2 credits/h) ≈ 4.8 credits/day ≈ $430/month. Partner files: Large warehouse nightly, ~20–40 min, 4–8 credits/day | ≈ $360–720/month for partner files |
-| Snowflake total | ≈ 52 credits/day × $3 × 30 | ≈ $4.7k/month, of which BI ≈ 60% |
+| Snowflake compute | ≈ 52 credits/day × $3 × 30: load 4.8 + transform 13.6 + finance 2 + BI 32 (Medium, ~8 h/day, 1 cluster on average); partner-file load is a separate line | ≈ $4.7k/month, of which BI ≈ 60% |
 | DynamoDB | reads ≈ $160–650 + writes ≈ $560 + storage ≈ $31 | ≈ $0.75–1.25k/month |
 
-**Napkin estimates.** Mumbai unit prices and load times are to be verified (load times need one test load). MSK, MWAA and Kafka Connect are not yet priced (§13).
+**Monthly cost summary** (napkin, list prices; all to verify for Mumbai):
+
+| Line | Basis | ≈ $/month |
+|---|---|---|
+| Snowflake compute | 52 credits/day (above) | 4,700 |
+| Partner-file load | 4–8 credits/day on a Large warehouse | 360–720 |
+| Kafka (MSK) | 3 brokers × ~$0.21/h × 730 h + 3.6 TB broker storage × ~$0.10/GB | ~820 |
+| Kafka Connect (Debezium + S3 sink) | ~14 capacity units × ~$0.11/h × 730 h | ~1,100 |
+| Airflow (MWAA) | small environment, ~$0.49/h × 730 h | ~360 |
+| SFTP (AWS Transfer Family) | 1 endpoint, ~$0.30/h + ~35 GB/day uploaded | ~260 |
+| Cross-zone traffic | Kafka replication, ~10 TB/month × ~$0.02/GB | ~200 |
+| DynamoDB | reads + writes + storage | 750–1,250 |
+| Snowflake Bronze | ~5.9 TB | 150–235 |
+| S3 raw | tiered; grows to 119 TB | ~370 (year 1) → 750–850 (year 5) |
+| S3 Silver + Gold (Iceberg) | grows to ~100 TB | ~500 (year 1) → ~2,500 (year 5) |
+| **Total** | | **≈ $9.5–10.5k (year 1) → ≈ $12–13k (year 5)** |
+
+Compute is about half the bill and BI is its largest part; storage grows each year, and the Silver payload drop (§10) is the main storage lever. Load times need one test load.
 
 ## 4. Architecture
 
@@ -86,6 +105,8 @@ How the data flows:
 | Partner files | SFTP or S3 upload → `landing/unit=…/vendor=…/business_date=D/` (versioning on) → ledger row with checksum → load once the control file is present and size is stable → nightly COPY on a Large warehouse → per-vendor Bronze → mapping config → `silver.partner_records` | Same checksum: skipped. Same name, new checksum: a correction that replaces the partner-day (restatement if published). `loaded + rejected ≠ trailer rows` or paise total ≠ trailer total: file held. Over 1% rows rejected: quarantined, partner manager alerted. Missing file: page at 04:30 (§6) |
 | APIs and spreadsheets | Airflow pull within rate limits, or full-snapshot spreadsheet export with strict checks → S3 → COPY → dbt (spreadsheets feed reference tables such as `dim_partner`) | Failed pull is retried; gaps show in freshness alerts. A failed spreadsheet check keeps the last good version and alerts the owner |
 
+**Schema changes.** Producers register Avro schemas in the schema registry with backward compatibility enforced, so a breaking change is rejected before it reaches Kafka. New optional fields flow through untouched in the raw payload and are mapped into Silver when a team needs them. Vendor format changes are caught by the per-vendor header check and handled by updating that vendor's mapping config.
+
 **Completeness of loading (D21).** Every COPY result is checked; errored files go to quarantine. A file ledger compares the S3 listing with Snowflake load history; a file unloaded after 30 min raises an alert. A per-partition Kafka offset-continuity check proves nothing was lost between Kafka and Snowflake (whether producer transactions leave offset gaps: verify).
 
 ## 6. Making it trustworthy
@@ -108,6 +129,7 @@ How the data flows:
 - Only certified Gold tables and approved metrics; every answer shows its SQL; all questions are logged.
 - Official finance figures come only from `gold_finance` and `finance_close`.
 - ~30–50 known questions run as a regression set in CI; roles, masking and row policies apply; Cortex cost is monitored.
+- **Owned by business teams (A14):** each metric and its allowed grains (hour, day, month, customer) belong to the team that defines it (e.g. finance owns "disbursed amount", lending owns "EMI collection rate"). Changes go through review, metrics are versioned and certified, and two teams cannot define the same metric differently.
 
 ## 7. Serving it
 
@@ -119,6 +141,27 @@ How the data flows:
 | Customer apps | `gold_app.app_customer_profile` pushed to DynamoDB every 15 min; API on top. Use cases: **offers, coupons, recommendations**, spending insights, cross-business account summary ("batch compute, online serve") | DynamoDB | ≤ 1 h; worst ≈ 33 min |
 | Internal tools, batch consumers | Snowflake read-only role; scheduled extracts | Small dedicated warehouse | Per run |
 | Auditors | Read-only Silver, `finance_close`, `ops.*`; raw S3 via external table; lineage | — | On request |
+
+**Core tables** (lending shown; other units follow the same pattern):
+
+| Table | Grain | Key | Ordering / dedup |
+|---|---|---|---|
+| `silver.lending_loan_events` | one row per event | `event_id` | dedup on `event_id`; ordered by `sequence` |
+| `silver.lending_loans_current` | one row per loan | `loan_id` | ordering guard on `sequence` (§8) |
+| `silver.money_movements` | one row per money movement, all units | `event_id` | carries `payment_ref`, amount in paise |
+| `silver.partner_records` | one row per vendor line | `(vendor, vendor_ref, line_type)` | replaced per partner-day |
+| `gold_finance.fct_reconciliation_breaks` | one row per unmatched item | `(vendor, business_date, item_ref)` | reason, owner, age |
+| `gold_app.app_customer_profile` | one row per customer | `customer_id` | `data_as_of` |
+
+**Gold grains are set by business teams (A14).** Each Gold table declares its grain, owner, refresh and retention in dbt `meta`, agreed with the owning team:
+
+| Grain | Examples | Typical owner | Refresh | Retention (team's choice, within floors) |
+|---|---|---|---|---|
+| Hourly | recharge volume and success rate; EMI collections in progress | business units, Ops | every 15 min | e.g. 90 days |
+| Daily | money movements, reconciliation, collections, premiums | finance, analysts | after the daily gate | 2–5 years (finance 5) |
+| Monthly | finance close, spending insights, trends | finance, analysts | monthly rollup | 5 years |
+| Customer-level | app profile, offer and coupon eligibility, segments, features | product, data science | every 15 min / daily | current + history as required |
+| Entity-level | loan-book snapshot, policy status | business units | daily | 2–5 years |
 
 The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): IDs, amounts and statuses only, no PAN, Aadhaar, name or full phone. `finance_close` is an append-only table written monthly (not a clone; Iceberg clone support: verify). Access: roles per consumer group, masking on personal data, row-access policies per unit.
 
@@ -183,7 +226,7 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 - **Running.** One Airflow DAG every 15 min: copy → dbt Silver per unit → shared Silver → app profile and push → intraday analytics (≈ 6–10 min of the 15). `max_active_runs=1`, `catchup=False`, two retries 2 minutes apart. Daily Gold starts when the gate opens; month close runs on working day 2.
 - **Failure and recovery.** Each dbt model is one atomic statement, so no table is half-written. The next run re-reads by `_loaded_at` with a 30-minute overlap; writes are idempotent (dedup + ordering guard), so this is harmless. Within 90 days, rebuild with `dbt build --full-refresh` or from Bronze. Older: a backfill runbook (`COPY … FORCE = TRUE` from S3 into a backfill table, then dbt). Silver and Gold have no Fail-safe (verify): recovery is always "rebuild from S3 raw".
 - **Monitoring.** Task and COPY alerts; `dbt source freshness` on Bronze `_loaded_at`; a dashboard of lag, counts and `ops.completeness`. Pages: gate closed at 04:30, COPY errors, connector heartbeat missing.
-- **Retention.** Kafka 7 days; S3 raw 5 years; Bronze 90 days; quarantine 1 year; Silver and Gold 2–5 years per unit (`meta: retention_years` in dbt, enforced by a daily delete job by event date), with a 5-year floor for finance Gold, `finance_close`, `silver.money_movements` and Ops run records.
+- **Retention.** Kafka 7 days; S3 raw 5 years; Bronze 90 days; quarantine 1 year; Silver and Gold per business-team requirement, 2–5 years by table and grain (e.g. hourly aggregates 90 days, monthly 5 years), declared as `meta: retention_years` in dbt and enforced by a daily delete job by event date, with a 5-year floor for finance Gold, `finance_close`, `silver.money_movements` and Ops run records.
 - **Audit trail.** `ops.run_manifest` records Airflow run ID, dbt run ID, git SHA and input range per run.
 - **Cost levers (figures in §3).** BI is ≈ 60% of Snowflake: use auto-suspend 60 s, result caching and scheduled dashboard refresh. Silver storage is the largest storage line: drop the raw JSON payload after 90 days (about half the size).
 
@@ -208,7 +251,7 @@ The full plan is in [test-plan.md](test-plan.md): 13 tests, each stating what it
 
 **(b) Where I am unsure (verify).**
 - Snowflake Iceberg limits (clone, Fail-safe, Time Travel, MERGE performance, Spark access); the dbt Iceberg configuration (`table_format='iceberg'`, external volume); OSI, semantic views and Cortex Analyst status.
-- Mumbai prices: Snowflake credit and storage, S3 tiers, DynamoDB (including the on-demand price change), Snowpipe. MSK, MWAA and Kafka Connect are not yet priced.
+- Mumbai prices: Snowflake credits, S3 tiers, DynamoDB (including the on-demand price change), Snowpipe, MSK, Kafka Connect, MWAA and Transfer Family: all §3 figures are list-price estimates. The BI usage assumption (Medium, ~8 h/day) drives the largest line.
 - Load times (COPY ≈ 1–2 min average, ≈ 3–5 min at peak; partner load ≈ 20–40 min): need one test load.
 - Debezium Outbox Event Router config keys; Kafka offset gaps from producer transactions.
 - The ~3-lines-per-transaction ratio and the 8-day dedup window: assumptions, not measurements.

@@ -244,24 +244,6 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 
 The full plan is in [test-plan.md](test-plan.md): 14 tests grouped by question, each naming the mistake it catches. Six are already written as code (marked ✅), including the two that matter most: the ordering-guard unit tests (arrival order and duplicates never change the current state) and the balance test (matched + breaks = total on both sides, exact paise).
 
-## 13. Honesty
-
-**(a) Left out on purpose.** Customer identity resolution across units (A7); multi-region disaster recovery; real-time fraud and online ML; deletion-request design (noted, not designed); regulated KYC retention that may exceed 5 years; clickstream and app events; code for completeness (A) and the other pipelines (design only).
-
-**(b) Where I am unsure (verify).**
-- Snowflake Iceberg limits (clone, Fail-safe, Time Travel, MERGE performance, Spark access); the dbt Iceberg configuration (`table_format='iceberg'`, external volume); OSI, semantic views and Cortex Analyst status.
-- Mumbai prices: Snowflake credits, S3 tiers, DynamoDB (including the on-demand price change), Snowpipe, MSK, Kafka Connect, MWAA and Transfer Family: all §3 figures are list-price estimates. The BI usage assumption (Medium, ~8 h/day) drives the largest line.
-- Load times (COPY ≈ 1–2 min average, ≈ 3–5 min at peak; partner load ≈ 20–40 min): need one test load.
-- Debezium Outbox Event Router config keys; Kafka offset gaps from producer transactions.
-- The ~5% daily change rate in partner snapshots, the diff time for 500M rows (≈ 45–90 min on Large) and the 8-day dedup window: assumptions, not measurements.
-
-**(c) AI use.**
-
-> ✍️ AUTHOR TO WRITE IN OWN WORDS:
-> - What I asked AI for (study notes, event-rate math, source and option comparisons, drafts of this document).
-> - What I kept, changed or rejected (for example, which suggestions I turned down and why).
-> - How I verified it (what I checked against documentation, what I computed myself, what remains unchecked).
-
 ## Appendix: code & tests index
 
 *Written as reviewable code (dbt-snowflake 1.10 parses it cleanly: 11 models, 1 snapshot, 13 data tests, 3 unit tests); not run against Snowflake. The service-side outbox write (§8) is described, not coded.*

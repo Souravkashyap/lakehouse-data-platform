@@ -8,7 +8,7 @@ A design-and-code exercise: a lakehouse data platform for three consumer busines
 
 | Read | What it is |
 |---|---|
-| [`docs/design.md`](docs/design.md) | The design document: architecture, assumptions, trade-offs, cost, and the honesty section |
+| [`docs/design.md`](docs/design.md) | The design document: architecture, assumptions, trade-offs, cost, and where it breaks first |
 | [`docs/test-plan.md`](docs/test-plan.md) | The test plan: what each test asserts, and how it would fail if the design were wrong |
 | `code/dbt/` | dbt project: Silver (ordering guard), partner snapshot diff, reconciliation engine, and the tests (3 unit tests + singular data tests) |
 | `code/airflow/dags/` | Two skeleton DAGs: the 15-minute pipeline and the daily partner/finance pipeline |

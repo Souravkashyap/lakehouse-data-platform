@@ -1,0 +1,32 @@
+version: 2
+
+sources:
+  - name: bronze_api
+    description: Third-party API pages exactly as received, one VARIANT per page. Parsing happens in staging.
+    database: "{{ env_var('BRONZE_DATABASE', 'lakehouse') }}"
+    schema: "{{ env_var('BRONZE_API_SCHEMA', 'bronze_api') }}"
+    tables:
+      - name: gateway_settlements
+        columns:
+          - name: raw
+            description: VARIANT. One API page {data[...], next_cursor}.
+          - name: _file_name
+          - name: _loaded_at
+
+  - name: bronze_sheets
+    description: Full snapshots of the Ops spreadsheet, every column text. Every pull is kept.
+    database: "{{ env_var('BRONZE_DATABASE', 'lakehouse') }}"
+    schema: "{{ env_var('BRONZE_SHEETS_SCHEMA', 'bronze_sheets') }}"
+    tables:
+      - name: fee_rules
+        columns:
+          - name: product_code
+          - name: fee_type
+          - name: fee_bps
+          - name: flat_fee_inr
+          - name: effective_from
+          - name: effective_to
+          - name: snapshot_ts
+            description: Time of the pull, taken from the S3 path.
+          - name: _file_name
+          - name: _loaded_at

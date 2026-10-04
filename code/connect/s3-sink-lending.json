@@ -1,0 +1,32 @@
+{
+  "name": "s3-sink-lending",
+  "config": {
+    "connector.class": "io.confluent.connect.s3.S3SinkConnector",
+    "tasks.max": "6",
+    "topics.regex": "lending\\..*",
+    "s3.region": "ap-south-1",
+    "s3.bucket.name": "lakehouse-raw",
+    "topics.dir": "bronze/lending",
+    "storage.class": "io.confluent.connect.s3.storage.S3Storage",
+    "format.class": "io.confluent.connect.s3.format.parquet.ParquetFormat",
+    "partitioner.class": "io.confluent.connect.storage.partitioner.TimeBasedPartitioner",
+    "path.format": "'ingest_date'=YYYY-MM-dd/'ingest_hour'=HH",
+    "partition.duration.ms": "3600000",
+    "locale": "en-IN",
+    "timezone": "Asia/Kolkata",
+    "timestamp.extractor": "Record",
+    "rotate.schedule.interval.ms": "300000",
+    "flush.size": "100000",
+    "transforms": "kafkaMeta",
+    "transforms.kafkaMeta.type": "org.apache.kafka.connect.transforms.InsertField$Value",
+    "transforms.kafkaMeta.topic.field": "topic",
+    "transforms.kafkaMeta.partition.field": "kafka_partition",
+    "transforms.kafkaMeta.offset.field": "kafka_offset",
+    "transforms.kafkaMeta.timestamp.field": "kafka_ts",
+    "errors.tolerance": "all",
+    "errors.deadletterqueue.topic.name": "dlq.s3sink.lending",
+    "errors.deadletterqueue.context.headers.enable": "true",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+  }
+}

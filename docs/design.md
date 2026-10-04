@@ -103,7 +103,10 @@ How the data flows:
 | Service DBs | Outbox row in the business transaction → Debezium reads the log → Kafka → S3 sink → COPY | Debezium or Kafka down: the log and Kafka (7 days) hold the events. A bad event hits only its unit's topic. Heartbeats expose a dead connector |
 | Legacy services | Debezium table CDC, raw only, LSN as the sequence | A table change breaks only that fallback model |
 | Partner files | SFTP or S3 upload → `landing/unit=…/vendor=…/business_date=D/` (versioning on) → ledger row with checksum → load once the control file is present and size is stable → nightly COPY of the **full snapshot** on a Large warehouse → per-vendor Bronze (last 2 snapshots) → mapping config + a row hash per record → **truncation guard** (row count within ±10% of yesterday, control totals present) → **daily diff vs yesterday (dbt snapshot):** new key = NEW, changed hash = CHANGED (new version), missing key = REMOVED; unchanged rows (~95%) do nothing → `silver.partner_records` (current versions) + `silver.partner_record_changes` | Same checksum: skipped. A snapshot that fails the truncation guard is **held, and no records are marked removed**: a cut-off file would otherwise look like millions of deletions. A changed record for a past business date is a partner restatement: that date is re-reconciled (§9). `loaded + rejected ≠ trailer rows` or paise total ≠ trailer total: file held. Over 1% rows rejected: quarantined, partner manager alerted. Missing file: page at 04:30 (§6) |
-| APIs and spreadsheets | Airflow pull within rate limits, or full-snapshot spreadsheet export with strict checks → S3 → COPY → dbt (spreadsheets feed reference tables such as `dim_partner`) | Failed pull is retried; gaps show in freshness alerts. A failed spreadsheet check keeps the last good version and alerts the owner |
+| Third-party APIs (example: a payment gateway's settlements, for recharge) | Daily Airflow pull at 01:30 for business day D: cursor pagination, each raw page stored untouched in S3 under a fixed key (`ingest_date=D/page_NNNNN.json`) → COPY into a VARIANT Bronze table → staging flattens to one row per settlement (exact paise, newest copy wins) → `silver_gateway_settlements` in the **same shape as partner records**, so it joins reconciliation unchanged. It is an incremental feed, not a full snapshot, so it skips the snapshot diff | 429: wait for `Retry-After`; 5xx: exponential backoff; then the task retries and pages. A rerun overwrites the same page keys, so it is idempotent. A missing day shows as missing-at-partner breaks (§9) |
+| Ops spreadsheets (example: fee rules) | Each daily run exports the **whole sheet** to S3 as a CSV snapshot (every pull kept, so edits are traceable) → COPY into text-only Bronze → `ref_fee_rules`: every row checked (unique product code, fee 0–10,000 bps, rupees → exact paise, valid date range); a snapshot is used only if **all** its rows pass | A bad edit never replaces good rules: the table keeps serving the last valid snapshot and a test pages the sheet owner |
+
+**Code per source:** service-side outbox write (`code/sources/service_db/outbox.sql`), Debezium and S3 sink configs (`code/connect/`), partner files (`lakehouse_partner_daily.py` + partner models), APIs and spreadsheets (`lakehouse_external_daily.py` + `staging/external/`). See the Appendix.
 
 **Schema changes.** Producers register Avro schemas in the schema registry with backward compatibility enforced, so a breaking change is rejected before it reaches Kafka. New optional fields flow through untouched in the raw payload and are mapped into Silver when a team needs them. Vendor format changes are caught by the per-vendor header check and handled by updating that vendor's mapping config.
 
@@ -188,7 +191,7 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 
 **Residual risk.** A duplicate more than 8 days late is not removed in Silver; the daily reconciliation (§9) catches it.
 
-**Where it lives.** The service-side outbox write (version bump + outbox insert in one transaction) is described above, not coded. `code/dbt/models/silver/lending/` holds `stg_lending_events.sql`, `silver_lending_loan_events.sql` (append-only history, dedup) and `silver_lending_loans_current.sql` (the ordering guard). Lending is the worked example; other units follow the same pattern.
+**Where it lives.** `code/sources/service_db/outbox.sql` holds the service-side write (version bump + outbox insert in one transaction) and `code/connect/debezium-lending-outbox.json` the connector that routes it to Kafka. `code/dbt/models/silver/lending/` holds `stg_lending_events.sql`, `silver_lending_loan_events.sql` (append-only history, dedup) and `silver_lending_loans_current.sql` (the ordering guard). Lending is the worked example; other units follow the same pattern.
 
 **Tests.**
 - **dbt unit tests** in `_silver_lending.yml` (test 1 in the test plan): a late older event never overwrites newer state; a newer event replaces it; sequences 9, 8, 9 in one batch apply once at 9. `assert_current_matches_latest_history.sql` checks every loan's current sequence equals its highest in history.
@@ -204,7 +207,7 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 **Options considered.** (1) Totals only: rejected, errors cancel. (2) Fuzzy amount matching: rejected, a "close" match cannot be explained to an auditor. (3) Item-level exact match, then a bounded secondary rule, every leftover classified (chosen).
 
 **Decision.**
-- `silver.money_movements` (internal) and `silver.partner_records` (partner, from conformed vendor files with control totals checked at load) share one shape: integer paise, `payment_ref`, event time.
+- `silver.money_movements` (internal) and `silver.partner_records` (partner, from conformed vendor files with control totals checked at load, plus API settlement feeds mapped to the same columns) share one shape: integer paise, `payment_ref`, event time.
 - Matching: first exact on `payment_ref` plus vendor; second, same customer and same amount within a ±1–2 day window. Never match on near amounts: zero amount tolerance, tolerance only on time.
 - Break classes: missing internally, missing at partner, amount differs, duplicate, timing (resolves next day), status disagreement. Fee and tax lines are checked against the Ops fee rules.
 - Output per unit, vendor and day: `fct_reconciliation_daily` (RECONCILED or BREAKS_OPEN, difference in paise) and `fct_reconciliation_breaks` (one row per unmatched item: reason, owner, age). Partner data never updates Silver state; if the partner is right, the service emits a correcting event. The partner side uses each record's **current version** from the daily snapshot diff; when a partner changes a record for a past business date, that date is re-reconciled and the restatement is logged.
@@ -242,14 +245,17 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 
 ## 12. Test plan
 
-The full plan is in [test-plan.md](test-plan.md): 14 tests grouped by question, each naming the mistake it catches. Six are already written as code (marked ✅), including the two that matter most: the ordering-guard unit tests (arrival order and duplicates never change the current state) and the balance test (matched + breaks = total on both sides, exact paise).
+The full plan is in [test-plan.md](test-plan.md): 15 tests grouped by question, each naming the mistake it catches. Seven are already written as code (marked ✅), including the two that matter most: the ordering-guard unit tests (arrival order and duplicates never change the current state) and the balance test (matched + breaks = total on both sides, exact paise).
 
 ## Appendix: code & tests index
 
-*Written as reviewable code (dbt-snowflake 1.10 parses it cleanly: 11 models, 1 snapshot, 13 data tests, 3 unit tests); not run against Snowflake. The service-side outbox write (§8) is described, not coded.*
+*Written as reviewable code (dbt-snowflake 1.10 parses it cleanly: 14 models, 1 snapshot, 14 data tests, 3 unit tests); not run against Snowflake. The connector configs and the outbox SQL are written to the documented Debezium / Confluent options but not run; version-specific keys are flagged in `code/connect/README.md`. The deep dives (B, C) carry most of the code; the source plumbing is kept short.*
 
 | Path (under `code/`) | Proves | Deep dive |
 |---|---|---|
+| `sources/service_db/outbox.sql` | Business write + outbox row in **one transaction**; `sequence` = the loan's version, bumped under the row lock | B |
+| `connect/debezium-lending-outbox.json` | Debezium Postgres CDC on the outbox only; Outbox Event Router → `lending.<entity>.events`, key = entity ID | B |
+| `connect/s3-sink-lending.json` | Kafka → S3 Parquet, folders by arrival hour, 5-min rotation; adds topic/partition/offset for dedup and offset-continuity checks; DLQ | Ops |
 | `dbt/models/staging/lending/stg_lending_events.sql` | Payload parsing; money as integer paise; UTC | B |
 | `dbt/models/silver/lending/silver_lending_loan_events.sql` | Append-only history; new rows picked up by load time; dedup on `event_id` (8-day window) | B |
 | `dbt/models/silver/lending/silver_lending_loans_current.sql` | **The ordering guard**: an event is applied only if its sequence is higher | B |
@@ -266,3 +272,6 @@ The full plan is in [test-plan.md](test-plan.md): 14 tests grouped by question, 
 | `dbt/macros/require_run_date.sql` | Fails fast without the run's logical date (no `current_date` fallback) | B, C |
 | `airflow/dags/lakehouse_15min.py` | COPY → dbt Silver per unit → shared Silver → app push; source freshness | Ops |
 | `airflow/dags/lakehouse_partner_daily.py` | Full file + trailer COPY → guard → snapshot → prune; finance build gated on completeness | Ops |
+| `airflow/dags/lakehouse_external_daily.py` | API pull (pagination, `Retry-After`, idempotent page keys) and spreadsheet snapshot export → COPY → dbt | Ops |
+| `dbt/models/staging/external/stg_api_gateway_settlements.sql`, `dbt/models/silver/external/silver_gateway_settlements.sql` | API pages → one row per settlement, exact paise → partner-record shape for reconciliation | C |
+| `dbt/models/staging/external/ref_fee_rules.sql` + `dbt/tests/assert_fee_rules_latest_snapshot_valid.sql` | Spreadsheet validation: only a fully valid snapshot is served; a bad edit pages the owner | Ops |

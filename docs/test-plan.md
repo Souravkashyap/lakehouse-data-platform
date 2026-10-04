@@ -29,12 +29,13 @@
 | 10 | Hourly counts match at every hop: Kafka → S3 → Bronze → Silver | a hop dropped or duplicated data | |
 | 11 | With one partner file missing, the day is **not published** to finance | the gate ignored the missing file | |
 | 12 | Each partner file matches its **control trailer** (rows and paise) | a bad file loaded silently | ✅ rows: `partner_snapshot_approval.sql` |
+| 13 | A **bad edit in the Ops spreadsheet** (duplicate product, fee out of range, unparseable amount) never replaces the last good fee rules, and the owner is paged | a hand-edited sheet flowed straight into reconciliation | ✅ `ref_fee_rules.sql` + `assert_fee_rules_latest_snapshot_valid.sql` |
 
 ## Running it
 
 | # | We check that… | It fails if… | Status |
 |:-:|---|---|---|
-| 13 | Late data in an **open** month restates the day and logs it; in a **closed** month, finance figures stay frozen | a correction silently overwrote a reported number | |
-| 14 | A run **killed halfway** leaves no gaps or duplicates after the next run | a step wasn't safe to repeat | |
+| 14 | Late data in an **open** month restates the day and logs it; in a **closed** month, finance figures stay frozen | a correction silently overwrote a reported number | |
+| 15 | A run **killed halfway** leaves no gaps or duplicates after the next run | a step wasn't safe to repeat | |
 
 **Why tests 1 and 5 matter most:** they sit exactly where the two hard guarantees live. If the ordering guard or the reconciliation were wrong, state or money would drift silently, and these turn red first.

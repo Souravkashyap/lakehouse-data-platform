@@ -1,0 +1,31 @@
+{
+  "name": "debezium-lending-outbox",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "plugin.name": "pgoutput",
+    "database.hostname": "lending-db.internal",
+    "database.port": "5432",
+    "database.user": "debezium",
+    "database.password": "${file:/opt/kafka/secrets/lending-db.properties:password}",
+    "database.dbname": "lending",
+    "topic.prefix": "lending",
+    "table.include.list": "public.outbox",
+    "slot.name": "lending_outbox_slot",
+    "publication.name": "lending_outbox_pub",
+    "publication.autocreate.mode": "filtered",
+    "snapshot.mode": "no_data",
+    "heartbeat.interval.ms": "10000",
+    "tombstones.on.delete": "false",
+    "transforms": "outbox",
+    "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+    "transforms.outbox.route.by.field": "aggregatetype",
+    "transforms.outbox.route.topic.replacement": "lending.${routedByValue}.events",
+    "transforms.outbox.table.field.event.id": "id",
+    "transforms.outbox.table.field.event.key": "aggregateid",
+    "transforms.outbox.table.field.event.payload": "payload",
+    "transforms.outbox.table.expand.json.payload": "true",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "value.converter": "io.confluent.connect.avro.AvroConverter",
+    "value.converter.schema.registry.url": "http://schema-registry:8081"
+  }
+}

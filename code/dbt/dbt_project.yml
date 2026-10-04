@@ -19,6 +19,8 @@ models:
         +tags: ["lending"]
       partners:
         +tags: ["partner"]   # kept off the 15-minute DAG's tag:lending selection
+      external:
+        +tags: ["external"]   # built by lakehouse_external_daily, not the 15-minute DAG
     # Snowflake-managed Iceberg tables in our own S3 (verify: dbt-snowflake >= 1.9 Iceberg support)
     silver:
       +table_format: iceberg
@@ -30,6 +32,11 @@ models:
           retention_years: 5
       shared:
         +tags: ["shared"]
+        +meta:
+          owner: data-platform
+          retention_years: 5
+      external:
+        +tags: ["external"]   # daily API pulls; built by lakehouse_external_daily only
         +meta:
           owner: data-platform
           retention_years: 5

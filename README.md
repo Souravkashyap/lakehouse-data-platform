@@ -11,7 +11,8 @@ A design-and-code exercise: a lakehouse data platform for three consumer busines
 | [`docs/design.md`](docs/design.md) | The design document: architecture, assumptions, trade-offs, cost, and where it breaks first |
 | [`docs/test-plan.md`](docs/test-plan.md) | The test plan: what each test asserts, and how it would fail if the design were wrong |
 | `code/dbt/` | dbt project: Silver (ordering guard), partner snapshot diff, reconciliation engine, and the tests (3 unit tests + singular data tests) |
-| `code/airflow/dags/` | Two skeleton DAGs: the 15-minute pipeline and the daily partner/finance pipeline |
+| `code/airflow/dags/` | Three skeleton DAGs: the 15-minute pipeline, the daily partner/finance pipeline, and the daily API + spreadsheet pull |
+| `code/sources/`, `code/connect/` | Service-side outbox write (Postgres) and the Debezium + S3 sink connector configs |
 
 ## Stack, and what it buys
 
@@ -36,6 +37,8 @@ Snowflake, Kafka, Airflow, Postgres and AWS are tools I've run in production, so
 
 ```
 docs/              design document, test plan, architecture diagram
+code/sources/      service_db/outbox.sql — business write + outbox row in one transaction
+code/connect/      Debezium outbox connector, Kafka → S3 sink connector
 code/dbt/          models (staging, silver, gold), snapshots, tests, macros
-code/airflow/dags/ lakehouse_15min.py, lakehouse_partner_daily.py
+code/airflow/dags/ lakehouse_15min.py, lakehouse_partner_daily.py, lakehouse_external_daily.py
 ```

@@ -116,7 +116,7 @@ How the data flows:
 | Analysts | `gold_<unit>`, `gold_shared`, semantic views | `BI_WH` (Medium, 1–3 clusters) | Intraday ≤ 1 h; yesterday by 07:00 IST |
 | Finance | `gold_finance` (daily money movements, reconciliation, breaks, loan-book snapshot), `finance_close` | `FINANCE_WH` (Small) | Yesterday complete and reconciled by 09:00; month close on working day 2 |
 | Data scientists | `gold_features.feat_customer_history`, Silver | Snowpark, or Spark on Iceberg (access: verify) | Yesterday by 06:00 |
-| Customer apps | `gold_app.app_customer_profile` pushed to DynamoDB every 15 min; API on top | DynamoDB | ≤ 1 h; worst ≈ 33 min |
+| Customer apps | `gold_app.app_customer_profile` pushed to DynamoDB every 15 min; API on top. Use cases: **offers, coupons, recommendations**, spending insights, cross-business account summary ("batch compute, online serve") | DynamoDB | ≤ 1 h; worst ≈ 33 min |
 | Internal tools, batch consumers | Snowflake read-only role; scheduled extracts | Small dedicated warehouse | Per run |
 | Auditors | Read-only Silver, `finance_close`, `ops.*`; raw S3 via external table; lineage | — | On request |
 

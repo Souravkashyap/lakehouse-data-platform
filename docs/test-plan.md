@@ -17,6 +17,8 @@
 | T-A-control-total | File integrity | `loaded + rejected = trailer rows`, paise = trailer total | Bad file loads silently | Load check | Yes |
 | T-OPS-restate | Corrections visible | Late data in an open month writes `ops.restatements`; in a closed month leaves `finance_close` unchanged | Silent overwrite | Integration | Planned |
 | T-OPS-failure | No partial writes | Kill a run mid-way; next run completes with no gaps or duplicates | Truncate-style staging | Fault injection | Manual first |
+| T-P-truncated-snapshot | A cut-off partner file never deletes records | A vendor snapshot with 40% of yesterday's rows fails the guard; `dbt snapshot` does not run; no record is marked REMOVED | The diff ran on any file, so a truncated file looked like millions of deletions | dbt singular test (`assert_partner_snapshot_not_truncated`) gating the snapshot | Yes |
+| T-P-diff | Only real changes flow downstream | Re-sending an identical snapshot creates no new versions; one changed amount creates exactly one new version; a key missing from a complete snapshot is invalidated once | The diff used file arrival instead of a row hash, or deletes were applied unguarded | dbt snapshot on seed data | Yes |
 
 **Why these two are written as code:** they sit exactly where the guarantees of the two deep dives live.
 - **T-B-permutation:** the ordering guard must give the same final state for every arrival order, with duplicates.

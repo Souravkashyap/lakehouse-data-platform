@@ -16,7 +16,7 @@ We build one data platform for lending, insurance and recharge. Each business wr
 | A2 | Events are business events (status changes, money movements), ~0.5–1 KB each. No clickstream. | Clickstream gets its own path, not the money path. |
 | A3 | Each service has its own database (Postgres and MySQL); no cross-database transactions. | Cross-service order is still not guaranteed. |
 | A4 | Services can add an outbox table. Legacy services use a temporary fallback (direct table CDC, change data capture). | If most teams refuse, the fallback becomes the main route (§11). |
-| A5 | Partner files show the counterparty's view of our transactions: ~500M rows ≈ 150 GB CSV/day from ~30–50 vendors, ~3 lines per transaction (3 × 173M ≈ 500M). New rows only, due by 02:00 IST. | Full re-sends raise load cost. Later files push the gate (§6) later. |
+| A5 | Partners send a **full daily snapshot** of their records for our customers (open accounts plus recent transactions, the counterparty's view of our data): ~500M rows ≈ 150 GB CSV/day from ~30–50 vendors, one vendor and one business unit per file, due by 02:00 IST. Most rows are unchanged day to day (assume ~5% change ≈ 25M changed rows/day). | If partners sent only new rows, the diff step (§5) does nothing and compute falls. If the change rate is much higher, diff and storage costs rise (§3). |
 | A6 | Partners carry our `payment_ref` plus their own reference. | Most rows need the weaker secondary rule (§9). |
 | A7 | One customer ID across units, from a central customer service. | Needs identity resolution (not designed). |
 | A8 | SLAs (the brief gives none): apps ≤ 1 h; analysts intraday ≤ 1 h and yesterday by 07:00 IST; data scientists by 06:00; finance complete and reconciled by 09:00; auditors: any number reproducible. | Seconds-level apps need streaming; tighter analyst freshness raises credits. |
@@ -42,12 +42,12 @@ We build one data platform for lending, insurance and recharge. Each business wr
 | Events per day | 2,000 events/s × 86,400 s/day | ≈ 173M events/day (ceiling 864M/day if peak all day) |
 | Peak ingest | 10,000 events/s × ~1 KB | ≈ 10 MB/s (≈ 30 MB/s with RF 3) |
 | Records per day | 173M events + 500M file rows | ≈ 673M records/day |
-| Raw, compressed | events 173M × ~1 KB ÷ ~5 (Parquet) ≈ 35 GB; files 500M rows × ~300 B ÷ 5 ≈ 30 GB (150 GB CSV before compression) | ≈ 65 GB/day |
-| S3 raw, 5 years | 65 GB/day × 1,825 days | ≈ 119 TB → ≈ $750–850/month at year 5 (tiered Standard, IA, Glacier IR) |
+| Raw, compressed | events 173M × ~1 KB ÷ ~5 (Parquet) ≈ 35 GB; partner full snapshot 500M rows × ~300 B ÷ 5 ≈ 30 GB (150 GB CSV); partner **changes** ≈ 5% ≈ 1.5 GB | ≈ 65 GB/day landed; ≈ 37 GB/day kept long-term |
+| S3 raw, 5 years | events 35 GB/day × 1,825 ≈ 64 TB; partner: full snapshots 90 days (≈ 2.7 TB) + month-end snapshots and daily change sets for 5 years (≈ 4.5 TB) | ≈ 71 TB → ≈ $490–545/month at year 5 (tiered Standard, IA, Glacier IR) |
 | Kafka, 7 days | 2 MB/s × 86,400 s × 7 days × 3 replicas | ≈ 3.6 TB on brokers |
-| Snowflake Bronze, 90 days | 65 GB/day × 90 | ≈ 5.9 TB → ≈ $150–235/month |
-| Silver + Gold history (Iceberg in our S3, billed by AWS) | ~55 GB/day; up to 5 years if every team keeps 5 | ≈ 20 TB in year 1, ≈ 100 TB by year 5 → ≈ $0.5k → ≈ $2.5k/month at ~$25/TB: the largest storage line |
-| Loads | COPY: 96 runs/day × ~1.5 min on Small (2 credits/h) ≈ 4.8 credits/day ≈ $430/month. Partner files: Large warehouse nightly, ~20–40 min, 4–8 credits/day | ≈ $360–720/month for partner files |
+| Snowflake Bronze | events 35 GB/day × 90 days ≈ 3.2 TB; partner: last 2 snapshots per vendor + 90 days of changes ≈ 0.2 TB | ≈ 3.4 TB → ≈ $85–135/month |
+| Silver + Gold history (Iceberg in our S3, billed by AWS) | ~40 GB/day (partner side stores changes only); up to 5 years if every team keeps 5 | ≈ 15 TB in year 1, ≈ 73 TB by year 5 → ≈ $0.37k → ≈ $1.8k/month at ~$25/TB: the largest storage line |
+| Loads | COPY: 96 runs/day × ~1.5 min on Small (2 credits/h) ≈ 4.8 credits/day ≈ $430/month. Partner files: Large warehouse nightly, load 150 GB + diff 500M rows against yesterday, ~45–90 min, 6–12 credits/day (estimate, needs a test) | ≈ $540–1,080/month for partner files |
 | Snowflake compute | ≈ 52 credits/day × $3 × 30: load 4.8 + transform 13.6 + finance 2 + BI 32 (Medium, ~8 h/day, 1 cluster on average); partner-file load is a separate line | ≈ $4.7k/month, of which BI ≈ 60% |
 | DynamoDB | reads ≈ $160–650 + writes ≈ $560 + storage ≈ $31 | ≈ $0.75–1.25k/month |
 
@@ -56,19 +56,19 @@ We build one data platform for lending, insurance and recharge. Each business wr
 | Line | Basis | ≈ $/month |
 |---|---|---|
 | Snowflake compute | 52 credits/day (above) | 4,700 |
-| Partner-file load | 4–8 credits/day on a Large warehouse | 360–720 |
+| Partner-file load + daily diff | 6–12 credits/day on a Large warehouse | 540–1,080 |
 | Kafka (MSK) | 3 brokers × ~$0.21/h × 730 h + 3.6 TB broker storage × ~$0.10/GB | ~820 |
 | Kafka Connect (Debezium + S3 sink) | ~14 capacity units × ~$0.11/h × 730 h | ~1,100 |
 | Airflow (MWAA) | small environment, ~$0.49/h × 730 h | ~360 |
 | SFTP (AWS Transfer Family) | 1 endpoint, ~$0.30/h + ~35 GB/day uploaded | ~260 |
 | Cross-zone traffic | Kafka replication, ~10 TB/month × ~$0.02/GB | ~200 |
 | DynamoDB | reads + writes + storage | 750–1,250 |
-| Snowflake Bronze | ~5.9 TB | 150–235 |
-| S3 raw | tiered; grows to 119 TB | ~370 (year 1) → 750–850 (year 5) |
-| S3 Silver + Gold (Iceberg) | grows to ~100 TB | ~500 (year 1) → ~2,500 (year 5) |
-| **Total** | | **≈ $9.5–10.5k (year 1) → ≈ $12–13k (year 5)** |
+| Snowflake Bronze | ~3.4 TB | 85–135 |
+| S3 raw | tiered; grows to ~71 TB | ~280 (year 1) → 490–545 (year 5) |
+| S3 Silver + Gold (Iceberg) | grows to ~73 TB | ~370 (year 1) → ~1,800 (year 5) |
+| **Total** | | **≈ $9.5–10.6k (year 1) → ≈ $11–12.3k (year 5)** |
 
-Compute is about half the bill and BI is its largest part; storage grows each year, and the Silver payload drop (§10) is the main storage lever. Load times need one test load.
+Compute is about half the bill and BI is its largest part; storage grows each year. Keeping partner **changes** instead of full daily snapshots saves ≈ 48 TB of raw storage over 5 years; the Silver payload drop (§10) is the other main storage lever. Load times need one test load.
 
 ## 4. Architecture
 
@@ -102,7 +102,7 @@ How the data flows:
 |---|---|---|
 | Service DBs | Outbox row in the business transaction → Debezium reads the log → Kafka → S3 sink → COPY | Debezium or Kafka down: the log and Kafka (7 days) hold the events. A bad event hits only its unit's topic. Heartbeats expose a dead connector |
 | Legacy services | Debezium table CDC, raw only, LSN as the sequence | A table change breaks only that fallback model |
-| Partner files | SFTP or S3 upload → `landing/unit=…/vendor=…/business_date=D/` (versioning on) → ledger row with checksum → load once the control file is present and size is stable → nightly COPY on a Large warehouse → per-vendor Bronze → mapping config → `silver.partner_records` | Same checksum: skipped. Same name, new checksum: a correction that replaces the partner-day (restatement if published). `loaded + rejected ≠ trailer rows` or paise total ≠ trailer total: file held. Over 1% rows rejected: quarantined, partner manager alerted. Missing file: page at 04:30 (§6) |
+| Partner files | SFTP or S3 upload → `landing/unit=…/vendor=…/business_date=D/` (versioning on) → ledger row with checksum → load once the control file is present and size is stable → nightly COPY of the **full snapshot** on a Large warehouse → per-vendor Bronze (last 2 snapshots) → mapping config + a row hash per record → **truncation guard** (row count within ±10% of yesterday, control totals present) → **daily diff vs yesterday (dbt snapshot):** new key = NEW, changed hash = CHANGED (new version), missing key = REMOVED; unchanged rows (~95%) do nothing → `silver.partner_records` (current versions) + `silver.partner_record_changes` | Same checksum: skipped. A snapshot that fails the truncation guard is **held, and no records are marked removed**: a cut-off file would otherwise look like millions of deletions. A changed record for a past business date is a partner restatement: that date is re-reconciled (§9). `loaded + rejected ≠ trailer rows` or paise total ≠ trailer total: file held. Over 1% rows rejected: quarantined, partner manager alerted. Missing file: page at 04:30 (§6) |
 | APIs and spreadsheets | Airflow pull within rate limits, or full-snapshot spreadsheet export with strict checks → S3 → COPY → dbt (spreadsheets feed reference tables such as `dim_partner`) | Failed pull is retried; gaps show in freshness alerts. A failed spreadsheet check keeps the last good version and alerts the owner |
 
 **Schema changes.** Producers register Avro schemas in the schema registry with backward compatibility enforced, so a breaking change is rejected before it reaches Kafka. New optional fields flow through untouched in the raw payload and are mapped into Silver when a team needs them. Vendor format changes are caught by the per-vendor header check and handled by updating that vendor's mapping config.
@@ -116,7 +116,7 @@ How the data flows:
 **Current (hard problem A, design only, no code).** Two tiers:
 
 - **Intraday** (apps, analysts' intraday): non-blocking. We publish what has arrived, and every table carries `data_as_of`. Worst case ≈ 33 min (sink 5 + COPY wait 15 + load 2 + Silver 3 + app Gold 3 + push 5).
-- **Daily** (data scientists 06:00, analysts 07:00, finance 09:00): a blocking gate. An arrival hour is complete when Kafka offsets reach Silver with no gaps, counts match across Kafka, S3, Bronze and Silver, and Debezium heartbeats show the connectors were alive. Business day D is complete when arrival hours through D+1 01:00 IST are complete (1 h allowed lateness, to be tuned to the p99.9 of arrival minus event time) and all expected partner files for D are loaded and match their control totals. The result goes to `ops.completeness`. Gate ≈ 02:30; daily Gold 02:30–03:30; reconciliation 03:30–04:30.
+- **Daily** (data scientists 06:00, analysts 07:00, finance 09:00): a blocking gate. An arrival hour is complete when Kafka offsets reach Silver with no gaps, counts match across Kafka, S3, Bronze and Silver, and Debezium heartbeats show the connectors were alive. Business day D is complete when arrival hours through D+1 01:00 IST are complete (1 h allowed lateness, to be tuned to the p99.9 of arrival minus event time) and all expected partner files for D are loaded, match their control totals and are diffed. The result goes to `ops.completeness`. Because partner snapshots are full files, the gate is **split in two**: the **internal gate** (≈ 01:30) releases features and daily analytics (internal data only), which finish ≈ 02:30; the **partner gate** (snapshots loaded and diffed, ≈ 03:00–03:40) releases finance reconciliation, which finishes ≈ 04:40.
 
 *Guarantee:* a business day appears in finance Gold only when every unit's events and every expected partner file for that day are loaded with no offset gaps and matching counts at every hop; if late data changes a published, non-closed day, the day is restated and the change is logged.
 
@@ -207,10 +207,10 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 - `silver.money_movements` (internal) and `silver.partner_records` (partner, from conformed vendor files with control totals checked at load) share one shape: integer paise, `payment_ref`, event time.
 - Matching: first exact on `payment_ref` plus vendor; second, same customer and same amount within a ±1–2 day window. Never match on near amounts: zero amount tolerance, tolerance only on time.
 - Break classes: missing internally, missing at partner, amount differs, duplicate, timing (resolves next day), status disagreement. Fee and tax lines are checked against the Ops fee rules.
-- Output per unit, vendor and day: `fct_reconciliation_daily` (RECONCILED or BREAKS_OPEN, difference in paise) and `fct_reconciliation_breaks` (one row per unmatched item: reason, owner, age). Partner data never updates Silver state; if the partner is right, the service emits a correcting event.
+- Output per unit, vendor and day: `fct_reconciliation_daily` (RECONCILED or BREAKS_OPEN, difference in paise) and `fct_reconciliation_breaks` (one row per unmatched item: reason, owner, age). Partner data never updates Silver state; if the partner is right, the service emits a correcting event. The partner side uses each record's **current version** from the daily snapshot diff; when a partner changes a record for a past business date, that date is re-reconciled and the restatement is logged.
 - Finance reports only reconciled periods or shows open breaks. Month close waits until breaks are resolved or formally accepted.
 
-*Decision sentence:* we chose item-level matching with classified breaks and zero amount tolerance over total-vs-total comparison because only itemised matches can be explained to auditors; it costs a daily item-level join of the day's internal money movements (a subset of ~173M events) against ~500M partner lines, finishing ≈ 04:30 with ≈ 4.5 h of slack before 09:00; it breaks first if partners do not carry our `payment_ref` (A6), when the secondary rule must do most of the work.
+*Decision sentence:* we chose item-level matching with classified breaks and zero amount tolerance over total-vs-total comparison because only itemised matches can be explained to auditors; it costs a daily item-level join of the day's internal money movements (a subset of ~173M events) against ~500M partner lines, finishing ≈ 04:40 with ≈ 4.3 h of slack before 09:00; it breaks first if partners do not carry our `payment_ref` (A6), when the secondary rule must do most of the work.
 
 **Guarantee.** For every partner and business day, every internal money movement and every partner record is either matched exactly in paise or listed as a classified break with an owner; matched + breaks equals the total on both sides, so no paisa is unaccounted for.
 
@@ -226,7 +226,7 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 - **Running.** One Airflow DAG every 15 min: copy → dbt Silver per unit → shared Silver → app profile and push → intraday analytics (≈ 6–10 min of the 15). `max_active_runs=1`, `catchup=False`, two retries 2 minutes apart. Daily Gold starts when the gate opens; month close runs on working day 2.
 - **Failure and recovery.** Each dbt model is one atomic statement, so no table is half-written. The next run re-reads by `_loaded_at` with a 30-minute overlap; writes are idempotent (dedup + ordering guard), so this is harmless. Within 90 days, rebuild with `dbt build --full-refresh` or from Bronze. Older: a backfill runbook (`COPY … FORCE = TRUE` from S3 into a backfill table, then dbt). Silver and Gold have no Fail-safe (verify): recovery is always "rebuild from S3 raw".
 - **Monitoring.** Task and COPY alerts; `dbt source freshness` on Bronze `_loaded_at`; a dashboard of lag, counts and `ops.completeness`. Pages: gate closed at 04:30, COPY errors, connector heartbeat missing.
-- **Retention.** Kafka 7 days; S3 raw 5 years; Bronze 90 days; quarantine 1 year; Silver and Gold per business-team requirement, 2–5 years by table and grain (e.g. hourly aggregates 90 days, monthly 5 years), declared as `meta: retention_years` in dbt and enforced by a daily delete job by event date, with a 5-year floor for finance Gold, `finance_close`, `silver.money_movements` and Ops run records.
+- **Retention.** Kafka 7 days; S3 raw 5 years (partner full snapshots 90 days, then month-end snapshots plus daily change sets, from which any day can be rebuilt); Bronze 90 days; quarantine 1 year; Silver and Gold per business-team requirement, 2–5 years by table and grain (e.g. hourly aggregates 90 days, monthly 5 years), declared as `meta: retention_years` in dbt and enforced by a daily delete job by event date, with a 5-year floor for finance Gold, `finance_close`, `silver.money_movements` and Ops run records.
 - **Audit trail.** `ops.run_manifest` records Airflow run ID, dbt run ID, git SHA and input range per run.
 - **Cost levers (figures in §3).** BI is ≈ 60% of Snowflake: use auto-suspend 60 s, result caching and scheduled dashboard refresh. Silver storage is the largest storage line: drop the raw JSON payload after 90 days (about half the size).
 
@@ -236,14 +236,14 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 |---|---|---|---|
 | Growth | MERGE and scan cost on multi-year Silver | dbt runs creeping past 10 min | `incremental_predicates` (8 days), clustering by load date, retention by unit |
 | Growth | DynamoDB write cost if profile churn rises | Writes above ≈ $560/month | Write only changed profiles; offers as a separate ≈ 0.5 KB item |
-| Growth | Partner-file window; small files at the S3 sink (≈ 2 MB at 5 min) | Partner load after 03:00; COPY time up | Larger warehouse (same credits, faster), files split to ~100–250 MB gzipped; fewer partitions on quiet topics |
+| Growth | Partner-file window (full snapshots: load + diff of 500M rows); small files at the S3 sink (≈ 2 MB at 5 min) | Partner gate after 04:00; COPY time up | Larger warehouse (same credits, faster), files split to ~100–250 MB gzipped; fewer partitions on quiet topics |
 | Operational | Late partner file | Gate closed at 04:30 (page) | Publish provisional, naming the partner; restate later |
 | Operational | Silent stall; duplicate over 8 days late | Freshness alert; reconciliation break | `data_as_of` on every table; late duplicate caught in §9 and restated |
 | Organisational | Outbox adoption across teams; vendor format changes | Services still on fallback CDC; header or control-total failure | Fallback keeps data flowing; adoption tracked per service; schema-registry contracts; per-vendor mapping config, file held and partner manager alerted |
 
 ## 12. Test plan
 
-The full plan is in [test-plan.md](test-plan.md): 13 tests, each stating what it asserts and how it would fail if the design were wrong. Two are real code: **T-B-permutation** (every arrival order and duplicate pattern gives the same current state) and **T-C-matched+breaks=total** (reconciliation loses or double-counts no paisa). The rest cover replay, late events, dedup, sequence monotonicity, break classification, completeness counts, the daily gate, control totals, restatement and failure injection.
+The full plan is in [test-plan.md](test-plan.md): 15 tests, each stating what it asserts and how it would fail if the design were wrong. Two are real code: **T-B-permutation** (every arrival order and duplicate pattern gives the same current state) and **T-C-matched+breaks=total** (reconciliation loses or double-counts no paisa). The rest cover replay, late events, dedup, sequence monotonicity, break classification, completeness counts, the daily gate, control totals, restatement, failure injection, and the partner-snapshot truncation guard and diff.
 
 ## 13. Honesty
 
@@ -254,7 +254,7 @@ The full plan is in [test-plan.md](test-plan.md): 13 tests, each stating what it
 - Mumbai prices: Snowflake credits, S3 tiers, DynamoDB (including the on-demand price change), Snowpipe, MSK, Kafka Connect, MWAA and Transfer Family: all §3 figures are list-price estimates. The BI usage assumption (Medium, ~8 h/day) drives the largest line.
 - Load times (COPY ≈ 1–2 min average, ≈ 3–5 min at peak; partner load ≈ 20–40 min): need one test load.
 - Debezium Outbox Event Router config keys; Kafka offset gaps from producer transactions.
-- The ~3-lines-per-transaction ratio and the 8-day dedup window: assumptions, not measurements.
+- The ~5% daily change rate in partner snapshots, the diff time for 500M rows (≈ 45–90 min on Large) and the 8-day dedup window: assumptions, not measurements.
 
 **(c) AI use.**
 

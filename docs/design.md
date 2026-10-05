@@ -203,30 +203,35 @@ We build one data platform for lending, insurance and recharge. Each business wr
 | Order by `occurred_at` | Rejected | Clocks skew, timestamps tie, transactions run long |
 | Auto-increment ID | Rejected | Assigned before commit, so it can become visible out of order |
 | Plain `MERGE` (always apply the incoming row) | Rejected | A late, older event overwrites newer state |
-| Kafka transactions (exactly-once) | Rejected | They end at the first non-transactional hop (S3 sink, COPY); the lake write must be idempotent anyway |
+| Kafka transactions (exactly-once) | Rejected | Stop at the S3 sink and COPY; the lake write must be idempotent anyway |
 | **At-least-once + source sequence + dedup + conditional upsert** | **Chosen** | The one ordering the source can prove |
 
 **How it works**
 - The outbox row is written in the same transaction as the business change.
-- `sequence` = the entity's own version, incremented under a row lock, so sequence order = commit order. Kafka key = entity ID keeps per-entity order.
-- Silver drops duplicates on `event_id` (last 8 days), then the **ordering guard** applies an event only if its sequence is higher than the stored one.
-- Every payload carries the **full entity state**, so the highest version is the current state (field-level `COALESCE` is only a safety net).
-- Money comes only through the outbox; fallback CDC uses LSN as sequence.
+- `sequence` = the entity's own version, bumped under a row lock, so sequence order = commit order; Kafka key = entity ID.
+- Silver drops duplicates on `event_id` (last 8 days), then the **ordering guard** applies an event only if its sequence is higher.
+- Every event carries the **full entity state**, so the highest version *is* the current state.
+- Money comes only through the outbox; fallback CDC uses the log position (LSN) as sequence.
 
-**Guarantee.** For any loan, policy or order, current state equals the event with the highest source sequence among all events received, regardless of how many times or in what order they arrived.
+**Decision summary**
 
-*Decision sentence:* we chose an entity version number plus a conditional upsert over timestamp ordering and Kafka transactions because it is the one ordering the source can prove; it costs a lock-and-increment in each service's transaction and an extra join in every incremental Silver run; it breaks first when a service does not adopt the version rule (then its order is only as good as its CDC log position) or when a duplicate arrives more than 8 days late (caught by reconciliation, §9).
+| | |
+|---|---|
+| Guarantee | Current state = the event with the highest source sequence received, however many times and in whatever order events arrive |
+| Cost | A lock-and-increment in each service transaction; an extra join in every incremental Silver run |
+| Breaks first | A service skips the version rule (its order is then only as good as its CDC log position); a duplicate arrives more than 8 days late (caught by reconciliation, §9) |
 
 **Code and tests** (lending is the worked example)
-- `code/sources/service_db/outbox.sql` (version bump + outbox in one transaction) and `code/connect/debezium-lending-outbox.json`.
-- `code/dbt/models/silver/lending/`: `stg_lending_events.sql`, `silver_lending_loan_events.sql` (append-only, dedup), `silver_lending_loans_current.sql` (the guard).
-- Test 1, unit tests in `_silver_lending.yml`: a late older event never overwrites newer state; a newer one replaces it; sequences 9, 8, 9 in one batch apply once at 9. Also `assert_current_matches_latest_history.sql`, `unique` / `not_null` on `event_id`, unique `loan_id`; replaying a batch twice changes nothing (test plan).
+
+| File | Proves |
+|---|---|
+| `sources/service_db/outbox.sql`, `connect/debezium-lending-outbox.json` | Change and event commit together, then route to Kafka |
+| `silver_lending_loan_events.sql`, `silver_lending_loans_current.sql` | Append-only history with dedup; the ordering guard |
+| `_silver_lending.yml` (test 1), `assert_current_matches_latest_history.sql` | A late older event never wins; 9, 8, 9 in one batch applies once at 9; current = highest sequence in history |
 
 ## 9. Deep dive 2 — C: exact paise reconciliation
 
-**Problem.** Our record of money (EMIs, premiums, recharges, refunds) must match what partners say happened, and every difference must be explained.
-
-**Why it is hard.** Cut-offs and T+1 settlement put one item on two days; fee and tax lines have no internal twin; a partner can say FAILED where we say SUCCESS for the same amount.
+**Problem.** Our record of money (EMIs, premiums, recharges, refunds) must match what partners say happened, and every difference must be explained. Hard because cut-offs and T+1 settlement put one item on two days, fee and tax lines have no internal twin, and a partner can say FAILED where we say SUCCESS for the same amount.
 
 | Option | Verdict | Why |
 |---|---|---|
@@ -243,22 +248,29 @@ We build one data platform for lending, insurance and recharge. Each business wr
 | 3. Leftovers | Only on our side (recent / older) or only on the partner's side | TIMING / MISSING_AT_PARTNER / MISSING_INTERNALLY |
 
 **How it runs**
-- **Inputs, one shape:** `silver.money_movements` vs `silver.partner_records` (vendor files with control totals, plus API settlement feeds): integer paise, `payment_ref`, event time.
-- **Counterparty:** for lending the lender's file, line for line, since borrowers repay the lender directly (A15); for recharge the gateway settlement feed.
-- **Nightly:** after the partner gate, re-match the last 7 business days plus any day a partner restated (`delete+insert` by business date); the summary and balance test cover exactly those dates.
-- **Outputs:** `fct_reconciliation_daily` (RECONCILED / BREAKS_OPEN, difference in paise) and `fct_reconciliation_breaks` (reason, owner, age).
-- **Rules:** partner data never updates Silver (if the partner is right, the service emits a correcting event); finance reports only reconciled periods; month close waits until breaks are resolved or accepted.
-- **Health metric:** first-pass auto-match rate per vendor (matched ÷ total); mature payment setups in India run at 85–95%+.
-- **Not covered yet:** fee and tax lines against `ref_fee_rules` (**planned**); many-to-one settlement (one payout = many transactions net of MDR and GST); three-way match with the bank statement on UTR; ledger balance checks; a maker-checker manual-match and write-off workflow. Lending needs none for line-level matching; recharge payouts need many-to-one.
+- **Inputs:** `silver.money_movements` vs `silver.partner_records` (vendor files and API settlement feeds), both in integer paise with `payment_ref`.
+- **Counterparty:** the lender's file for lending, since borrowers repay the lender directly (A15); the gateway feed for recharge.
+- **Nightly:** after the partner gate, re-match the last 7 business days plus any restated day; the summary and balance test cover exactly those dates.
+- **Outputs:** daily status per vendor (RECONCILED / BREAKS_OPEN) and one break row per item with reason, owner and age.
+- **Rules:** partner data never changes Silver (the service emits a correcting event); finance reports only reconciled days; month close waits for breaks.
+- **Health metric:** first-pass auto-match rate per vendor; mature setups in India run at 85–95%+.
+- **Not covered yet:** fee lines vs `ref_fee_rules` (**planned**) · many-to-one settlement net of MDR and GST (needed for recharge payouts) · bank statement on UTR · ledger balances · maker-checker write-offs.
 
-**Guarantee.** For every partner and business day, every internal money movement and every partner record is either matched exactly in paise or listed as a classified break with an owner; matched + breaks equals the total on both sides, so no paisa is unaccounted for.
+**Decision summary**
 
-*Decision sentence:* we chose item-level matching with classified breaks and zero amount tolerance over total-vs-total comparison because only itemised matches can be explained to auditors; it costs a daily item-level join of the day's internal money movements (a subset of ~173M events) against ~500M partner lines, finishing ≈ 04:40 with ≈ 4.3 h of slack before 09:00; it breaks first if partners do not carry our `payment_ref` (A6), when the secondary rule must do most of the work.
+| | |
+|---|---|
+| Guarantee | Every internal money movement and partner record is matched exactly in paise or listed as a classified break with an owner; matched + breaks = total on both sides, per partner and day |
+| Cost | A daily item-level join of the day's money movements (a subset of ~173M events) against ~500M partner lines; done ≈ 04:40, ≈ 4.3 h before the 09:00 SLA |
+| Breaks first | Partners stop carrying our `payment_ref` (A6), so the weaker secondary rule does most of the work |
 
 **Code and tests**
-- `code/dbt/models/silver/shared/`: `silver_money_movements.sql`, `silver_partner_records.sql`, `silver_partner_record_changes.sql`, plus the partner snapshot and approval models.
-- `code/dbt/models/gold/finance/`: `fct_reconciliation_items.sql` (the matching engine), `fct_reconciliation_breaks.sql`, `fct_reconciliation_daily.sql`.
-- Test 5, `assert_reconciliation_balances.sql`: per vendor and day, both sides, matched + break paise = total paise, and the same for counts. Test plan: one seeded example per break class; a cancelling pair (missing 500, duplicate 500) gives two breaks, not zero.
+
+| File | Proves |
+|---|---|
+| `silver_money_movements.sql`, `silver_partner_records.sql`, `silver_partner_record_changes.sql` + partner snapshot models | Both sides in one shape; partner corrections tracked |
+| `fct_reconciliation_items.sql`, `fct_reconciliation_breaks.sql`, `fct_reconciliation_daily.sql` | The matching engine; breaks with owner and age; status per day |
+| `assert_reconciliation_balances.sql` (test 5) | matched + breaks = total, in paise and counts, both sides; seeded break examples are in the test plan |
 
 ## 10. Living with it
 

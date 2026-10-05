@@ -41,37 +41,41 @@ We build one data platform for lending, insurance and recharge. Each business wr
 
 ## 3. Napkin math
 
-**Key numbers**
+**Inputs:** 2,000 events/s average (10k peak, A1) · ~1 KB per event · 500M partner rows/day of ~300 B (A5) · Parquet ≈ 5× smaller than raw · Snowflake ≈ $3/credit.
 
-| Item | Calculation | Result |
+**Volume and storage**
+
+| What | Estimate | How |
 |---|---|---|
-| Events | 2,000/s × 86,400; + 500M file rows | ≈ 173M events/day (ceiling 864M); ≈ 673M records/day |
-| Peak ingest | 10,000/s × ~1 KB | ≈ 10 MB/s (≈ 30 MB/s with RF 3) |
-| Raw landed | events 173M × ~1 KB ÷ 5 (Parquet) ≈ 35 GB; partner snapshot 500M × ~300 B ÷ 5 ≈ 30 GB; partner changes (5%) ≈ 1.5 GB | ≈ 65 GB/day landed; ≈ 37 GB/day kept long-term |
-| S3 raw, 5 years | events 35 GB × 1,825 ≈ 64 TB; partner snapshots 90 days ≈ 2.7 TB + month-end and change sets ≈ 4.5 TB | ≈ 71 TB; ≈ $490–545/month at year 5 |
-| Kafka, 7 days | 2 MB/s × 86,400 × 7 × 3 replicas | ≈ 3.6 TB |
-| Snowflake Bronze | events 35 GB × 90 days ≈ 3.2 TB + partner ≈ 0.2 TB | ≈ 3.4 TB; ≈ $85–135/month |
-| Silver + Gold (Iceberg in our S3) | ~40 GB/day; ≈ 15 TB year 1, ≈ 73 TB year 5 if every team keeps 5; at ~$25/TB | ≈ $0.37k → ≈ $1.8k/month |
-| Snowflake credits | ≈ 52/day × $3 × 30 = load 4.8 (96 COPY runs × ~1.5 min, Small, 2 credits/h ≈ $430/month) + transform 13.6 + finance 2 + BI 32 (Medium, ~8 h/day) | ≈ $4.7k/month; BI ≈ 60% |
-| Partner-file load | Large warehouse nightly: load 150 GB + diff 500M rows, ~45–90 min, 6–12 credits/day (estimate; needs one test load) | ≈ $540–1,080/month |
-| DynamoDB | reads ≈ $160–650 + writes ≈ $560 + storage ≈ $31 | ≈ $0.75–1.25k/month |
+| Events | ≈ 173M/day (max 864M) | 2,000/s × 86,400 s |
+| All records | ≈ 673M/day | + 500M partner rows |
+| Peak ingest | ≈ 10 MB/s (30 MB/s with 3 replicas) | 10,000/s × 1 KB |
+| Landed per day | ≈ 65 GB (≈ 37 GB kept long-term) | events 35 GB + partner snapshot 30 GB; only partner changes (5% ≈ 1.5 GB) are kept |
+| S3 raw, 5 years | ≈ 71 TB | events 35 GB × 1,825 ≈ 64 TB + partner ≈ 7 TB (90 days of snapshots, then month-ends and changes) |
+| Kafka, 7 days | ≈ 3.6 TB | 2 MB/s × 7 days × 3 replicas |
+| Snowflake Bronze, 90 days | ≈ 3.4 TB | events 3.2 TB + partner 0.2 TB |
+| Silver + Gold (Iceberg) | ≈ 15 TB year 1 → ≈ 73 TB year 5 | ~40 GB/day, if every team keeps 5 years |
 
-**Monthly cost (list prices, verify for Mumbai)**
+**Compute:** ≈ 52 Snowflake credits/day ≈ $4.7k/month: BI 32 (Medium, ~8 h/day; ≈ 60%) · transform 13.6 · load 4.8 (96 COPY runs on Small ≈ $430/month) · finance 2. The nightly partner load and diff (150 GB, 500M rows) adds 6–12 credits/day on a Large warehouse, ~45–90 min (estimate; needs one test load).
 
-| Line | Basis | ≈ $/month |
+**Monthly cost** ($)
+
+| Line | Year 1 | Year 5 |
 |---|---|---|
-| Snowflake compute | 52 credits/day | 4,700 |
-| Partner-file load + diff | 6–12 credits/day, Large | 540–1,080 |
-| Kafka (MSK) | 3 brokers × ~$0.21/h × 730 h + 3.6 TB × ~$0.10/GB | ~820 |
-| Kafka Connect | ~14 units × ~$0.11/h × 730 h | ~1,100 |
-| Airflow, SFTP, cross-zone | MWAA ~$0.49/h; Transfer Family ~$0.30/h + ~35 GB/day; ~10 TB × ~$0.02/GB: 360 + 260 + 200 | ≈ 820 |
-| DynamoDB | reads + writes + storage | 750–1,250 |
-| Snowflake Bronze | ~3.4 TB | 85–135 |
-| S3 raw | tiered, to ~71 TB | ~280 (year 1) → 490–545 (year 5) |
-| S3 Silver + Gold | to ~73 TB | ~370 (year 1) → ~1,800 (year 5) |
-| **Total** | | **≈ $9.5–10.6k (year 1) → ≈ $11–12.3k (year 5)** |
-| *Where it goes* | Compute is about half the bill, BI its largest part; storage grows each year | — |
-| *Storage levers* | Keep partner **changes**, not full daily snapshots (saves ≈ 48 TB over 5 years); drop the Silver payload (§10) | — |
+| Snowflake compute | 4,700 | 4,700 |
+| Partner load + diff | 540–1,080 | 540–1,080 |
+| Kafka (MSK) | ~820 | ~820 |
+| Kafka Connect (Debezium + S3 sink) | ~1,100 | ~1,100 |
+| Airflow, SFTP, cross-zone traffic | ~820 (360 + 260 + 200) | ~820 |
+| DynamoDB (reads 160–650 + writes 560 + storage 31) | 750–1,250 | 750–1,250 |
+| Storage: Snowflake Bronze + S3 raw + Silver/Gold | 85–135 + 280 + 370 | 85–135 + 490–545 + 1,800 |
+| **Total** | **≈ 9.5–10.6k** | **≈ 11–12.3k** |
+
+*List prices, verify for Mumbai:* MSK broker ~$0.21/h and storage ~$0.10/GB-month · Connect ~$0.11/unit-hour (~14 units) · MWAA ~$0.49/h · Transfer Family ~$0.30/h · cross-zone ~$0.02/GB (~10 TB/month) · S3 and Iceberg storage ~$25/TB-month (S3 raw tiered).
+
+**What it tells us**
+- Compute is about half the bill, and BI is 60% of it: auto-suspend, result caching and scheduled refresh are the levers (§10).
+- Storage is the line that grows: keeping partner **changes** instead of full daily snapshots saves ≈ 48 TB over 5 years; dropping the Silver payload after 90 days (§10) is the next lever.
 
 ## 4. Architecture
 

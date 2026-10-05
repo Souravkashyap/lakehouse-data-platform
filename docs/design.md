@@ -102,9 +102,67 @@ How the data flows:
 |---|---|---|
 | Service DBs | Outbox row in the business transaction → Debezium reads the log → Kafka → S3 sink → COPY | Debezium or Kafka down: the log and Kafka (7 days) hold the events. A bad event hits only its unit's topic. Heartbeats expose a dead connector |
 | Legacy services | Debezium table CDC, raw only, LSN as the sequence | A table change breaks only that fallback model |
-| Partner files | SFTP or S3 upload → `landing/unit=…/vendor=…/business_date=D/` (versioning on) → ledger row with checksum → load once the control file is present and size is stable → nightly COPY of the **full snapshot** on a Large warehouse → per-vendor Bronze (last 2 snapshots) → mapping config + a row hash per record → **truncation guard** (row count within ±10% of yesterday, control totals present) → **daily diff vs yesterday (dbt snapshot):** new key = NEW, changed hash = CHANGED (new version), missing key = REMOVED; unchanged rows (~95%) do nothing → `silver.partner_records` (current versions) + `silver.partner_record_changes` | Same checksum: skipped. A snapshot that fails the truncation guard is **held, and no records are marked removed**: a cut-off file would otherwise look like millions of deletions. A changed record for a past business date is a partner restatement: that date is re-reconciled (§9). `loaded + rejected ≠ trailer rows` or paise total ≠ trailer total: file held. Over 1% rows rejected: quarantined, partner manager alerted. Missing file: page at 04:30 (§6) |
+| Partner files | SFTP or S3 upload → `landing/<unit>/<vendor>/snapshot_date=D/` (versioning on) → ledger row with checksum → load once the control file is present and size is stable → nightly COPY of the **full snapshot** on a Large warehouse → per-vendor Bronze (last 2 snapshots) → mapping config + a row hash per record → **truncation guard** (row count within ±10% of yesterday, control totals present) → **daily diff vs yesterday (dbt snapshot):** new key = NEW, changed hash = CHANGED (new version), missing key = REMOVED; unchanged rows (~95%) do nothing → `silver.partner_records` (current versions) + `silver.partner_record_changes` | Same checksum: skipped. A snapshot that fails the truncation guard is **held, and no records are marked removed**: a cut-off file would otherwise look like millions of deletions. A changed record for a past business date is a partner restatement: that date is re-reconciled (§9). `loaded + rejected ≠ trailer rows` or paise total ≠ trailer total: file held. Over 1% rows rejected: quarantined, partner manager alerted. Missing file: page at 04:30 (§6) |
 | Third-party APIs (example: a payment gateway's settlements, for recharge) | Daily Airflow pull at 01:30 for business day D: cursor pagination, each raw page stored untouched in S3 under a fixed key (`ingest_date=D/page_NNNNN.json`) → COPY into a VARIANT Bronze table → staging flattens to one row per settlement (exact paise, newest copy wins) → `silver_gateway_settlements` in the **same shape as partner records**, so it joins reconciliation unchanged. It is an incremental feed, not a full snapshot, so it skips the snapshot diff | 429: wait for `Retry-After`; 5xx: exponential backoff; then the task retries and pages. A rerun overwrites the same page keys, so it is idempotent. A missing day shows as missing-at-partner breaks (§9) |
 | Ops spreadsheets (example: fee rules) | Each daily run exports the **whole sheet** to S3 as a CSV snapshot (every pull kept, so edits are traceable) → COPY into text-only Bronze → `ref_fee_rules`: every row checked (unique product code, fee 0–10,000 bps, rupees → exact paise, valid date range); a snapshot is used only if **all** its rows pass | A bad edit never replaces good rules: the table keeps serving the last valid snapshot and a test pages the sheet owner |
+
+**Event streams in one line (A13):** 4 source services publish 6 topics (`<unit>.<entity>.events`, key = entity ID, 57 partitions). Every event shares one envelope, and only the payload differs per topic. Topics, payloads and the S3 layout are expanded below.
+
+<details>
+<summary><b>Topics, event schema and S3 layout</b> (click to expand)</summary>
+
+**Topics** (partitions sized by each unit's assumed share of the 10k/s peak: recharge 60%, lending 30%, insurance 5%, customer 5%)
+
+| Source service | Topic | Partitions | Example events | Bronze table |
+|---|---|:-:|---|---|
+| Lending | `lending.loan_application.events` | 6 | ApplicationSubmitted, Approved, Rejected | `bronze.lending_events` |
+| Lending | `lending.loan.events` | 12 | LoanDisbursed, EmiPaid, EmiMissed, LoanClosed | `bronze.lending_events` |
+| Insurance | `insurance.policy.events` | 6 | PolicyIssued, PremiumPaid, PolicyLapsed | `bronze.insurance_events` |
+| Insurance | `insurance.claim.events` | 3 | ClaimFiled, ClaimApproved, ClaimSettled | `bronze.insurance_events` |
+| Recharge | `recharge.order.events` | 24 | RechargeInitiated, RechargeCompleted, RechargeFailed, RefundIssued | `bronze.recharge_events` |
+| Customer | `customer.profile.events` | 6 | CustomerCreated, KycUpdated, ConsentChanged | `bronze.customer_events` |
+
+**Envelope** (Avro in Kafka, backward compatibility enforced by the schema registry; Parquet in S3)
+
+| Field | Type | Purpose |
+|---|---|---|
+| `event_id` | string (UUID) | Dedup key |
+| `event_type` | string | e.g. `EmiPaid` |
+| `aggregate_id` | string | Loan, policy or order ID; also the Kafka key, so one entity stays in one partition, in order |
+| `sequence` | integer | The entity's own version number: the ordering key (§8) |
+| `occurred_at` | timestamp (UTC) | Event time |
+| `payload` | JSON | `{customer_id, data{…this change…}, state{…full entity state after it…}}` |
+| `topic`, `kafka_partition`, `kafka_offset`, `kafka_ts` | added by the S3 sink | Dedup tie-break, offset-continuity check, arrival time |
+
+Snowflake adds `_file_name`, `_file_row` and `_loaded_at` at COPY. All money is integer paise.
+
+**Payload per topic** (assumed; the brief names no event types)
+
+| Topic | `data` (this change) | `state` (full state after) |
+|---|---|---|
+| loan_application | requested_amount_paise, product, lender_id | status, approved_amount_paise, decision_reason |
+| loan *(coded)* | amount_paise, payment_ref, lender_id | status, outstanding_principal_paise, next_emi_date, next_emi_paise, days_past_due |
+| policy | premium_paise, payment_ref, insurer_id | status, sum_assured_paise, start_date, end_date, next_premium_date |
+| claim | claim_amount_paise, policy_id | status, approved_amount_paise, settled_at |
+| recharge order | amount_paise, payment_ref, gateway, operator, plan_id | status, refund_paise, failure_reason |
+| customer profile | changed fields only | kyc_status, consent flags, city (personal data tokenised) |
+
+Because `state` carries the full entity after every change, Silver never merges fields: the highest `sequence` is the current state.
+
+**S3 layout** (one bucket, versioning on; folders by **arrival** time, since topics use `LogAppendTime`)
+
+```
+s3://lakehouse-raw/
+  bronze/<unit>/<topic>/ingest_date=YYYY-MM-DD/ingest_hour=HH/*.parquet    events, 5-min files, kept 5 years
+  landing/<unit>/<vendor>/snapshot_date=D/                                 partner full files + control file
+  raw/api/<source>/ingest_date=D/page_NNNNN.json                            API pages, as received
+  raw/sheets/<sheet>/snapshot_ts=<ts>/<sheet>.csv                           spreadsheet snapshots
+  quarantine/…                                                              rejected files, 1 year
+```
+
+One S3 sink connector per unit (`code/connect/s3-sink-lending.json`). Files move to cheaper storage classes with age.
+
+</details>
 
 **Code per source:** service-side outbox write (`code/sources/service_db/outbox.sql`), Debezium and S3 sink configs (`code/connect/`), partner files (`lakehouse_partner_daily.py` + partner models), APIs and spreadsheets (`lakehouse_external_daily.py` + `staging/external/`). See the Appendix.
 

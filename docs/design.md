@@ -188,13 +188,13 @@ Topics, event envelope, payloads and S3 layout (A13): Appendix A. Code per sourc
 - *Decision sentence:* we chose DynamoDB over serving apps from Snowflake because it gives single-digit ms single-key reads at ≈ $0.75–1.25k/month against a 24×7 warehouse at ≈ $2.2k/month; it costs a second store and an API to keep in sync; it breaks first on write cost if profile churn grows well beyond ~10M updates/day.
 - **When it fails.** A failed push leaves apps on the last profile, with an old `data_as_of`. If Snowflake is down, apps are unaffected.
 
-**Why these two problems.** I picked the failures that are silent and costly:
+## 8. Deep dive 1 — B: correct latest state
+
+**Why these two deep dives (§8, §9).** I picked the failures that are silent and costly:
 - **They corrupt money or what a customer sees,** not just a dashboard.
 - **They don't fail loudly:** pipelines stay green while state or totals drift (a late event wins; a missing ₹500 cancels a duplicate ₹500).
 - **They need a guarantee, not a setting:** no tool option fixes them.
 - **Not chosen:** completeness is designed (§6) but not coded; schema drift is handled by registry contracts (§5); customer identity is out of scope (A7).
-
-## 8. Deep dive 1 — B: correct latest state
 
 **Problem.** Events arrive twice, late, out of order or by two routes; each loan, policy and order must still end in exactly the right state.
 

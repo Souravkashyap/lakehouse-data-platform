@@ -12,33 +12,23 @@ We build one data platform for lending, insurance and recharge. Each business wr
 
 ## 1. Context & assumptions
 
-**From the brief**
-- Sources: service databases, event streams, daily partner files, third-party APIs, Ops spreadsheets.
-- Scale: ~10k events/s at peak, ~500M file rows/day, 50M customers, 5 years of history.
-- Money in integer paise; a lakehouse; consumers are analysts, finance, apps, data scientists, auditors.
-- No schemas, event types, file formats or latency targets are given. **Items marked A are our assumptions.**
+**From the brief:** five source types (service databases, event streams, partner files, third-party APIs, Ops spreadsheets); ~10k events/s at peak and ~500M file rows/day; 50M customers; 5 years of history; money in integer paise. No schemas, event types, file formats or latency targets are given, so the items below are **our assumptions**.
 
 **Key assumptions**
 
 | # | Assumption | If wrong |
 |---|---|---|
-| A1 | 10k events/s is the busiest-day peak (salary days, EMI dates, festivals). Average 2,000/s (peak ≈ 5×), so ≈ 173M events/day. | At 10k/s average (864M/day), storage and credits rise ≈ 5×. |
-| A5 | Partners send a **full daily snapshot** (their view of our customers): ~500M rows ≈ 150 GB CSV/day, ~30–50 vendors, one vendor and unit per file, due by 02:00 IST. ~5% changes (≈ 25M rows/day). | If only new rows arrive, the diff (§5) does nothing. A higher change rate raises diff and storage cost (§3). |
-| A6 | Partners carry our `payment_ref` plus their own reference. | Most rows need the weaker secondary rule (§9). |
-| A8 | SLAs (none in the brief): apps ≤ 1 h; analysts intraday ≤ 1 h, yesterday by 07:00 IST; data scientists 06:00; finance reconciled by 09:00; auditors: any number reproducible. | Seconds-level apps need streaming; tighter freshness raises credits. |
-| A11 | AWS Mumbai (`ap-south-1`); payment data stays in India (RBI, 2018). | A second region is a larger design. |
-| A13 | "Event streams" are business events via the outbox. Any direct Kafka producer uses the same envelope (`event_id`, entity ID, `sequence`, `occurred_at`) and topics. | No sequence means no §8 ordering guarantee; those topics get dedup only. |
-| A15 | Lending = term loans with EMIs, sourced as a Lending Service Provider: loans sit on partner lenders' books, repayments go to the lender (RBI Digital Lending Directions, 2025). The lender's asset classification is official; ours is an operational mirror, reconciled to lender files. ~10M active loans, ~12-month tenure. | Revolving credit (BNPL) needs a statement-based model and different overdue rules. |
+| A1 | Peak 10k events/s on the busiest days; average ~2,000/s ≈ 173M events/day. | At 10k/s average (864M/day), cost ≈ 5×. |
+| A5 | Partners send a **full daily snapshot** (~500M rows, ~30–50 vendors, by 02:00 IST); ~5% changes daily. | New-rows-only files make the diff step (§5) unnecessary. |
+| A6 | Partner lines carry our `payment_ref`. | The weaker secondary match does most of the work (§9). |
+| A8 | SLAs: apps ≤ 1 h; analysts by 07:00 IST; data scientists 06:00; finance reconciled 09:00. | Seconds-level freshness needs streaming. |
+| A15 | Lending: we are a Lending Service Provider; loans sit on lenders' books (~10M active, EMIs), so the lender's classification is official. | Revolving credit (BNPL) needs a different model. |
 
 **Other assumptions**
-- **A2.** Business events (status changes, money movements), ~0.5–1 KB each; no clickstream.
-- **A3.** Each service has its own database (Postgres, MySQL); no cross-database transactions.
-- **A4.** Services can add an outbox table; legacy services use temporary table CDC (if most refuse, §11).
-- **A7.** One customer ID across units from a central service (else identity resolution, not designed).
-- **A9.** Apps read live data from their own service database; the platform serves cross-business, partner, derived or long-history data.
-- **A10.** Data scientists need training and batch features; no online prediction.
-- **A12.** Snowflake Enterprise, about $3 per credit; §3 Snowflake figures scale linearly.
-- **A14.** Business teams set Gold grains, Silver and Gold retention and metric definitions through a short data contract; the platform team reviews cost.
+- **A7.** One customer ID across businesses; no identity resolution.
+- **A11.** AWS Mumbai (`ap-south-1`); payment data stays in India (RBI).
+- **A13.** Services publish business events via the outbox with one envelope (`event_id`, entity ID, `sequence`, `occurred_at`).
+- **A14.** Business teams own Gold grains, retention and metric definitions through a short data contract.
 
 ## 2. Requirements, SLAs and non-goals
 

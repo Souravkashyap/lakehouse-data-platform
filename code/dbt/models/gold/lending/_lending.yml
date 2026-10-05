@@ -1,0 +1,98 @@
+version: 2
+
+models:
+  - name: fct_lending_loan_daily
+    description: Periodic snapshot, one row per loan and IST day, with RBI day-end DPD and bucket. Design section 7.
+    columns:
+      - name: loan_day_key
+        data_tests: [unique, not_null]
+      - name: dpd_bucket
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['CURRENT', 'SMA_0', 'SMA_1', 'SMA_2', 'NPA']
+      - name: pos_paise
+        data_tests: [not_null]
+
+  - name: fct_lending_loan_milestones
+    description: Accumulating snapshot, one row per loan, with the first dates it reached DPD 1/31/61/91. Dates after today are projections.
+    columns:
+      - name: loan_id
+        data_tests: [unique, not_null]
+
+  - name: agg_lending_portfolio_daily
+    description: Loans, POS and overdue by day, lender, product and DPD bucket. Additive measures only.
+
+  - name: agg_lending_disbursals_daily
+    description: Disbursals by day, lender, product and channel. Averages are computed from the additive sums.
+
+  - name: agg_lending_funnel_daily
+    description: Application funnel by submission date, product and channel.
+
+  - name: agg_lending_collections_daily
+    description: Collections by installment due date, lender and product.
+
+  - name: agg_lending_vintage_monthly
+    description: Ever-30+ and ever-90+ vintage curves by disbursal-month cohort and month on book.
+
+  - name: agg_lending_roll_rates_monthly
+    description: Month-end to month-end DPD bucket transitions; rows only on month-end runs.
+
+# RBI day-end rule: tests 14-16 in docs/test-plan.md.
+unit_tests:
+  - name: dpd_follows_rbi_day_end_rule
+    description: >
+      As of 29 Jun 2026 an EMI due 31 Mar is NPA (dpd 91, RBI's own example), with edges at 30/31, 60/61, 90/91.
+      A payment at 00:10 IST on 30 Jun (18:40 UTC on 29 Jun) does not count for 29 Jun. NPA is sticky until all
+      arrears are paid (loan H stays NPA at dpd 46; loan I returns to CURRENT).
+    model: fct_lending_loan_daily
+    overrides:
+      macros:
+        is_incremental: true
+      vars:
+        run_date: '2026-06-29'
+    given:
+      - input: ref('silver_lending_loans_current')
+        rows:
+          - {loan_id: A, customer_id: C1, lender_id: NBFC-017, product_code: PERSONAL_LOAN, principal_paise: 100000, disbursal_date: '2026-01-15', closed_date: null, written_off_date: null, sequence: 1}
+          - {loan_id: B, customer_id: C1, lender_id: NBFC-017, product_code: PERSONAL_LOAN, principal_paise: 100000, disbursal_date: '2026-01-15', closed_date: null, written_off_date: null, sequence: 1}
+          - {loan_id: C, customer_id: C1, lender_id: NBFC-017, product_code: PERSONAL_LOAN, principal_paise: 100000, disbursal_date: '2026-01-15', closed_date: null, written_off_date: null, sequence: 1}
+          - {loan_id: D, customer_id: C1, lender_id: NBFC-017, product_code: PERSONAL_LOAN, principal_paise: 100000, disbursal_date: '2026-01-15', closed_date: null, written_off_date: null, sequence: 1}
+          - {loan_id: E, customer_id: C1, lender_id: NBFC-017, product_code: PERSONAL_LOAN, principal_paise: 100000, disbursal_date: '2026-01-15', closed_date: null, written_off_date: null, sequence: 1}
+          - {loan_id: F, customer_id: C1, lender_id: NBFC-017, product_code: PERSONAL_LOAN, principal_paise: 100000, disbursal_date: '2026-01-15', closed_date: null, written_off_date: null, sequence: 1}
+          - {loan_id: G, customer_id: C1, lender_id: NBFC-017, product_code: PERSONAL_LOAN, principal_paise: 100000, disbursal_date: '2026-01-15', closed_date: null, written_off_date: null, sequence: 1}
+          - {loan_id: H, customer_id: C1, lender_id: NBFC-017, product_code: PERSONAL_LOAN, principal_paise: 100000, disbursal_date: '2026-01-15', closed_date: null, written_off_date: null, sequence: 1}
+          - {loan_id: I, customer_id: C1, lender_id: NBFC-017, product_code: PERSONAL_LOAN, principal_paise: 100000, disbursal_date: '2026-01-15', closed_date: null, written_off_date: null, sequence: 1}
+          - {loan_id: J, customer_id: C1, lender_id: NBFC-017, product_code: PERSONAL_LOAN, principal_paise: 100000, disbursal_date: '2026-01-15', closed_date: null, written_off_date: null, sequence: 1}
+          - {loan_id: K, customer_id: C1, lender_id: NBFC-017, product_code: PERSONAL_LOAN, principal_paise: 100000, disbursal_date: '2026-01-15', closed_date: null, written_off_date: null, sequence: 1}
+      - input: ref('silver_lending_installments')
+        rows:
+          - {loan_id: A, installment_no: 1, due_date: '2026-03-31', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 0, fully_paid_at: null}
+          - {loan_id: K, installment_no: 1, due_date: '2026-04-01', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 0, fully_paid_at: null}
+          - {loan_id: B, installment_no: 1, due_date: '2026-04-30', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 0, fully_paid_at: null}
+          - {loan_id: J, installment_no: 1, due_date: '2026-05-01', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 0, fully_paid_at: null}
+          - {loan_id: C, installment_no: 1, due_date: '2026-05-30', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 0, fully_paid_at: null}
+          - {loan_id: D, installment_no: 1, due_date: '2026-05-31', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 0, fully_paid_at: null}
+          - {loan_id: E, installment_no: 1, due_date: '2026-06-29', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 0, fully_paid_at: null}
+          - {loan_id: F, installment_no: 1, due_date: '2026-06-29', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 12000, fully_paid_at: '2026-06-29 09:30:00'}
+          - {loan_id: G, installment_no: 1, due_date: '2026-06-28', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 12000, fully_paid_at: '2026-06-29 18:40:00'}
+          - {loan_id: H, installment_no: 1, due_date: '2026-05-15', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 0, fully_paid_at: null}
+          - {loan_id: I, installment_no: 1, due_date: '2026-02-15', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 12000, fully_paid_at: '2026-06-29 05:00:00'}
+          - {loan_id: I, installment_no: 2, due_date: '2026-07-15', principal_due_paise: 10000, emi_due_paise: 12000, paid_paise: 0, fully_paid_at: null}
+      - input: this
+        rows:
+          - {loan_id: H, as_of_date: '2026-06-28', is_npa: true, npa_since_date: '2026-05-01'}
+          - {loan_id: I, as_of_date: '2026-06-28', is_npa: true, npa_since_date: '2026-05-01'}
+    expect:
+      rows:
+        - {loan_id: A, dpd: 91, dpd_bucket: NPA, is_npa: true}
+        - {loan_id: K, dpd: 90, dpd_bucket: SMA_2, is_npa: false}
+        - {loan_id: B, dpd: 61, dpd_bucket: SMA_2, is_npa: false}
+        - {loan_id: J, dpd: 60, dpd_bucket: SMA_1, is_npa: false}
+        - {loan_id: C, dpd: 31, dpd_bucket: SMA_1, is_npa: false}
+        - {loan_id: D, dpd: 30, dpd_bucket: SMA_0, is_npa: false}
+        - {loan_id: E, dpd: 1, dpd_bucket: SMA_0, is_npa: false}
+        - {loan_id: F, dpd: 0, dpd_bucket: CURRENT, is_npa: false}
+        - {loan_id: G, dpd: 2, dpd_bucket: SMA_0, is_npa: false}
+        - {loan_id: H, dpd: 46, dpd_bucket: NPA, is_npa: true}
+        - {loan_id: I, dpd: 0, dpd_bucket: CURRENT, is_npa: false}

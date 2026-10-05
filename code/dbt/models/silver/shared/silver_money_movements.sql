@@ -12,16 +12,18 @@ with lending as (
         event_id                as item_id,
         event_id,
         'lending'               as business_unit,
-        vendor,
+        lender_id               as vendor,
         -- the business day is the IST day
         to_date(convert_timezone('UTC', 'Asia/Kolkata', event_time_utc)) as business_date,
         case event_type
             when 'LoanDisbursed' then 'DISBURSAL'
             when 'EmiPaid'       then 'EMI_REPAYMENT'
+            when 'LoanForeclosed' then 'FORECLOSURE'
         end                     as movement_type,
         case event_type
             when 'LoanDisbursed' then 'OUT'
             when 'EmiPaid'       then 'IN'
+            when 'LoanForeclosed' then 'IN'
         end                     as direction,
         amount_paise,
         payment_ref,
@@ -30,7 +32,7 @@ with lending as (
         event_time_utc,
         loaded_at
     from {{ ref('silver_lending_loan_events') }}
-    where event_type in ('LoanDisbursed', 'EmiPaid')
+    where event_type in ('LoanDisbursed', 'EmiPaid', 'LoanForeclosed')
       and amount_paise is not null
     {% if is_incremental() %}
       and loaded_at > (select dateadd(minute, -30, max(loaded_at)) from {{ this }})

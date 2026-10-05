@@ -10,7 +10,7 @@ A design-and-code exercise: a lakehouse data platform for three consumer busines
 |---|---|
 | [`docs/design.md`](docs/design.md) | The design document: architecture, assumptions, trade-offs, cost, and where it breaks first |
 | [`docs/test-plan.md`](docs/test-plan.md) | The test plan: what each test asserts, and how it would fail if the design were wrong |
-| `code/dbt/` | dbt project: Silver (ordering guard), partner snapshot diff, reconciliation engine, and the tests (3 unit tests + singular data tests) |
+| `code/dbt/` | dbt project: lending Silver (loans, installments, applications, ordering guard), lending Gold (daily loan snapshot with RBI DPD buckets, portfolio, disbursals, funnel, collections, vintage, roll rates, app summary), partner snapshot diff, reconciliation engine, and the tests (4 unit tests + singular data tests) |
 | `code/airflow/dags/` | Three skeleton DAGs: the 15-minute pipeline, the daily partner/finance pipeline, and the daily API + spreadsheet pull |
 | `code/sources/`, `code/connect/` | Service-side outbox write (Postgres) and the Debezium + S3 sink connector configs |
 

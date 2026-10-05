@@ -26,7 +26,9 @@ def notify_on_call(context):
 
 
 def push_app_profiles(**_):
-    """Changed rows of gold_app.app_customer_profile -> S3 unload -> DynamoDB upsert."""
+    """Changed rows of gold_app.app_customer_profile -> S3 unload -> DynamoDB upsert.
+
+    app_lending_customer_summary (loans, next EMI due) feeds that profile."""
 
 
 def copy_sql(unit: str) -> str:
@@ -78,6 +80,7 @@ with DAG(
         task_id="dbt_silver_shared",
         bash_command=DBT.format(cmd="build") + CAUTIOUS + """ --select tag:shared --vars '{run_date: "{{ ds }}"}'""",
     )
+    app = BashOperator(task_id="dbt_gold_app", bash_command=DBT.format(cmd="build") + CAUTIOUS + " --select tag:app")
     push = PythonOperator(task_id="push_app_profiles", python_callable=push_app_profiles)
 
-    groups >> shared >> push
+    groups >> shared >> app >> push

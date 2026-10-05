@@ -48,3 +48,13 @@ models:
         +meta:
           owner: finance-data
           retention_years: 5
+      lending:
+        +tags: ["lending_daily"]   # built once a day after the internal completeness gate, never by the 15-minute DAG
+        +meta:
+          owner: lending-risk
+          retention_years: 5
+      app:
+        +tags: ["app"]
+        +meta:
+          owner: lending-product
+          retention_years: 0       # current state only

@@ -3,7 +3,9 @@
 Per vendor: COPY the full file and its control trailer into Bronze, check the truncation guard, run
 `dbt snapshot` (SCD2 change detection on a row hash), then prune Bronze to the last two files.
 The finance build waits for every vendor AND for the internal completeness gate (ops.completeness),
-so reconciliation never runs on a partial day. Internal data is loaded by lakehouse_15min.
+so reconciliation never runs on a partial day. The lending risk Gold (daily snapshot, portfolio,
+collections, vintage, roll rates) also waits for the internal gate and is built for one date per run.
+Internal data is loaded by lakehouse_15min.
 See docs/design.md sections 5, 6 and 9.
 """
 from datetime import timedelta
@@ -60,6 +62,10 @@ with DAG(
         task_id="dbt_build_finance",
         bash_command=DBT.format(cmd="build") + " --select tag:finance" + RUN_DATE,
     )
+    lending_gold = BashOperator(
+        task_id="dbt_build_lending_daily",
+        bash_command=DBT.format(cmd="build") + " --select tag:lending_daily" + RUN_DATE,
+    )
 
     for unit, vendor in VENDORS:
         with TaskGroup(group_id=f"{unit}_{vendor}") as group:
@@ -85,3 +91,4 @@ with DAG(
         group >> finance
 
     internal_gate >> finance
+    internal_gate >> lending_gold

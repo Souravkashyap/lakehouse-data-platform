@@ -1,0 +1,8 @@
+version: 2
+
+models:
+  - name: app_lending_customer_summary
+    description: One row per customer, what the app shows about their loans. No clock; the app compares earliest_unpaid_due_date with today. Feeds the DynamoDB push.
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]

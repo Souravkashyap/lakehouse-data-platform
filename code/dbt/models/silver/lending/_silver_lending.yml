@@ -22,7 +22,30 @@ models:
         data_tests:
           - accepted_values:
               arguments:
-                values: ['APPLIED', 'APPROVED', 'DISBURSED', 'REPAYING', 'OVERDUE', 'CLOSED', 'WRITTEN_OFF']
+                values: ['ACTIVE', 'CLOSED', 'FORECLOSED', 'CANCELLED', 'WRITTEN_OFF']
+
+  - name: silver_lending_installments
+    description: One row per loan and installment, from the loan's guarded latest state. A touched loan has all its installments replaced. Design section 8.
+    columns:
+      - name: loan_id
+        data_tests: [not_null]
+      - name: installment_no
+        data_tests: [not_null]
+      - name: due_date
+        data_tests: [not_null]
+      - name: emi_due_paise
+        data_tests: [not_null]
+
+  - name: silver_lending_applications_current
+    description: Current state per loan application, protected by the same ordering guard (highest source sequence wins). Design section 8.
+    columns:
+      - name: application_id
+        data_tests: [unique, not_null]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['SUBMITTED', 'APPROVED', 'REJECTED', 'ACCEPTED', 'DISBURSED', 'CANCELLED', 'EXPIRED']
 
 # Ordering-guard tests: test 1 in docs/test-plan.md.
 unit_tests:
@@ -35,14 +58,14 @@ unit_tests:
     given:
       - input: ref('silver_lending_loan_events')
         rows:
-          - {loan_id: L1, sequence: 6, event_type: EmiPaid, status: OVERDUE, outstanding_principal_paise: 1000, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 40, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
-          - {loan_id: L2, sequence: 1, event_type: EmiPaid, status: APPLIED, outstanding_principal_paise: 1000, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 0, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
+          - {loan_id: L1, sequence: 6, event_type: EmiPaid, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00', customer_id: C1, lender_id: NBFC-017, state_json: '{"status": "ACTIVE", "product_code": "PERSONAL_LOAN"}'}
+          - {loan_id: L2, sequence: 1, event_type: EmiPaid, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00', customer_id: C1, lender_id: NBFC-017, state_json: '{"status": "ACTIVE", "product_code": "PERSONAL_LOAN"}'}
       - input: this
         rows:
-          - {loan_id: L1, sequence: 7, status: REPAYING, last_loaded_at: '2026-10-03 10:00:00'}
+          - {loan_id: L1, sequence: 7, status: ACTIVE, last_loaded_at: '2026-10-03 10:00:00'}
     expect:
       rows:
-        - {loan_id: L2, sequence: 1, status: APPLIED}
+        - {loan_id: L2, sequence: 1, status: ACTIVE}
 
   - name: newer_event_replaces_state
     description: A higher sequence replaces the stored state.
@@ -53,10 +76,10 @@ unit_tests:
     given:
       - input: ref('silver_lending_loan_events')
         rows:
-          - {loan_id: L1, sequence: 8, event_type: EmiPaid, status: CLOSED, outstanding_principal_paise: 0, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 0, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
+          - {loan_id: L1, sequence: 8, event_type: EmiPaid, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00', customer_id: C1, lender_id: NBFC-017, state_json: '{"status": "CLOSED", "product_code": "PERSONAL_LOAN"}'}
       - input: this
         rows:
-          - {loan_id: L1, sequence: 7, status: REPAYING, last_loaded_at: '2026-10-03 10:00:00'}
+          - {loan_id: L1, sequence: 7, status: ACTIVE, last_loaded_at: '2026-10-03 10:00:00'}
     expect:
       rows:
         - {loan_id: L1, sequence: 8, status: CLOSED}
@@ -70,12 +93,12 @@ unit_tests:
     given:
       - input: ref('silver_lending_loan_events')
         rows:
-          - {loan_id: L1, sequence: 9, event_type: EmiPaid, status: CLOSED, outstanding_principal_paise: 0, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 0, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
-          - {loan_id: L1, sequence: 8, event_type: EmiPaid, status: REPAYING, outstanding_principal_paise: 1000, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 0, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
-          - {loan_id: L1, sequence: 9, event_type: EmiPaid, status: CLOSED, outstanding_principal_paise: 0, next_emi_date: '2026-11-05', next_emi_paise: 100, days_past_due: 0, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00'}
+          - {loan_id: L1, sequence: 9, event_type: EmiPaid, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00', customer_id: C1, lender_id: NBFC-017, state_json: '{"status": "CLOSED", "product_code": "PERSONAL_LOAN"}'}
+          - {loan_id: L1, sequence: 8, event_type: EmiPaid, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00', customer_id: C1, lender_id: NBFC-017, state_json: '{"status": "ACTIVE", "product_code": "PERSONAL_LOAN"}'}
+          - {loan_id: L1, sequence: 9, event_type: EmiPaid, event_time_utc: '2026-10-03 10:00:00', loaded_at: '2026-10-03 11:00:00', customer_id: C1, lender_id: NBFC-017, state_json: '{"status": "CLOSED", "product_code": "PERSONAL_LOAN"}'}
       - input: this
         rows:
-          - {loan_id: L1, sequence: 7, status: REPAYING, last_loaded_at: '2026-10-03 10:00:00'}
+          - {loan_id: L1, sequence: 7, status: ACTIVE, last_loaded_at: '2026-10-03 10:00:00'}
     expect:
       rows:
         - {loan_id: L1, sequence: 9, status: CLOSED}

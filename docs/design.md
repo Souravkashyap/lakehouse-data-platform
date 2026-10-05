@@ -26,6 +26,7 @@ We build one data platform for lending, insurance and recharge. Each business wr
 | A12 | Snowflake Enterprise edition, about $3 per credit. | Every Snowflake figure in §3 scales linearly. |
 | A13 | The brief's "event streams" are the services' business events, published through the outbox. Any service that produces to Kafka directly must use the same event envelope (`event_id`, entity ID, `sequence`, `occurred_at`) and the same topics. | Producers without a sequence lose the ordering guarantee in §8; their topics get dedup only. |
 | A14 | Business teams decide the Gold grains (hourly, daily, monthly, customer-level), the retention of their Silver and Gold tables, and the definitions of their metrics, through a short data contract. The platform team reviews each request for cost. | Without owners, metrics drift between teams (the brief's "inconsistent between teams"). |
+| A15 | Lending means term loans with EMIs (personal and merchant loans), sourced as a Lending Service Provider: loans sit on partner lenders' books and repayments go straight to the lender (RBI Digital Lending Directions, 2025). The lender's asset classification is official; ours is an operational mirror, reconciled against lender files. ~10M active loans, ~12-month average tenure. | Revolving credit (postpaid/BNPL) needs a statement-based model and different overdue rules. |
 
 ## 2. Requirements, SLAs and non-goals
 
@@ -115,8 +116,8 @@ How the data flows:
 
 | Source service | Topic | Partitions | Example events | Bronze table |
 |---|---|:-:|---|---|
-| Lending | `lending.loan_application.events` | 6 | ApplicationSubmitted, Approved, Rejected | `bronze.lending_events` |
-| Lending | `lending.loan.events` | 12 | LoanDisbursed, EmiPaid, EmiMissed, LoanClosed | `bronze.lending_events` |
+| Lending | `lending.loan_application.events` | 6 | ApplicationSubmitted, Approved, Rejected, OfferAccepted | `bronze.lending_events` |
+| Lending | `lending.loan.events` | 12 | LoanDisbursed, EmiPaid, EmiBounced, LoanForeclosed, LoanWrittenOff | `bronze.lending_events` |
 | Insurance | `insurance.policy.events` | 6 | PolicyIssued, PremiumPaid, PolicyLapsed | `bronze.insurance_events` |
 | Insurance | `insurance.claim.events` | 3 | ClaimFiled, ClaimApproved, ClaimSettled | `bronze.insurance_events` |
 | Recharge | `recharge.order.events` | 24 | RechargeInitiated, RechargeCompleted, RechargeFailed, RefundIssued | `bronze.recharge_events` |
@@ -140,8 +141,8 @@ Snowflake adds `_file_name`, `_file_row` and `_loaded_at` at COPY. All money is 
 
 | Topic | `data` (this change) | `state` (full state after) |
 |---|---|---|
-| loan_application | requested_amount_paise, product, lender_id | status, approved_amount_paise, decision_reason |
-| loan *(coded)* | amount_paise, payment_ref, lender_id | status, outstanding_principal_paise, next_emi_date, next_emi_paise, days_past_due |
+| loan_application *(coded)* | requested amount, product, channel | status, approved amount, rate and tenure, rejection reason, submitted / decided / accepted / disbursed times, loan_id |
+| loan *(coded)* | amount_paise, payment_ref, installment_no | terms (principal, rate, tenure, EMI, fees), status, outstanding principal, next EMI, dates, and the **full repayment schedule** (due, paid, fully paid at, bounces per installment) |
 | policy | premium_paise, payment_ref, insurer_id | status, sum_assured_paise, start_date, end_date, next_premium_date |
 | claim | claim_amount_paise, policy_id | status, approved_amount_paise, settled_at |
 | recharge order | amount_paise, payment_ref, gateway, operator, plan_id | status, refund_paise, failure_reason |
@@ -209,10 +210,52 @@ One S3 sink connector per unit (`code/connect/s3-sink-lending.json`). Files move
 |---|---|---|---|
 | `silver.lending_loan_events` | one row per event | `event_id` | dedup on `event_id`; ordered by `sequence` |
 | `silver.lending_loans_current` | one row per loan | `loan_id` | ordering guard on `sequence` (§8) |
+| `silver.lending_installments` | one row per loan and installment | `(loan_id, installment_no)` | replaced per loan from its guarded latest state |
 | `silver.money_movements` | one row per money movement, all units | `event_id` | carries `payment_ref`, amount in paise |
 | `silver.partner_records` | one row per vendor line | `(vendor, vendor_ref, line_type)` | replaced per partner-day |
 | `gold_finance.fct_reconciliation_breaks` | one row per unmatched item | `(vendor, business_date, item_ref)` | reason, owner, age |
 | `gold_app.app_customer_profile` | one row per customer | `customer_id` | `data_as_of` |
+
+**Lending, modelled for lending (worked example).** The lending tables answer lending's own questions: how much we disbursed, how much is overdue and how badly, how good recent cohorts are, and what each customer owes next. Three facts shape them:
+1. **An unpaid loan emits no events,** so a DPD stored in the last event goes stale exactly when it matters. DPD is computed from the repayment schedule as of a date.
+2. **RBI's day-end rule** counts DPD inclusively: an EMI due 31 Mar and unpaid is SMA-1 on 30 Apr, SMA-2 on 30 May and NPA on 29 Jun. NPA is sticky until all arrears are paid.
+3. **Aggregates store only sums and counts.** PAR30, collection efficiency, average ticket and weighted rate are ratios computed in the semantic layer, so they roll up correctly across any grouping.
+
+<details>
+<summary><b>Lending Silver and Gold tables, definitions and size</b> (click to expand)</summary>
+
+**Silver** (from `lending.loan.events` and `lending.loan_application.events`; every event carries the full loan, schedule included)
+
+| Table | Grain | How it stays right |
+|---|---|---|
+| `lending_loan_events` | one row per event | append-only, dedup on `event_id` |
+| `lending_loans_current` | one row per loan: terms, status, outstanding, dates | ordering guard on `sequence` |
+| `lending_installments` | one row per loan × installment: due, paid, fully paid at, bounces | all of a loan's rows replaced from its latest state (a restructured schedule can shrink) |
+| `lending_applications_current` | one row per application: amounts, decision, milestone times, channel | ordering guard on `sequence` |
+
+**Gold** (`gold_lending`, built once a day after the internal gate, for one date per run; the app summary every 15 min)
+
+| Table | Grain | Answers | Owner |
+|---|---|---|---|
+| `fct_lending_loan_daily` | loan × day | DPD, RBI bucket (CURRENT, SMA-0/1/2, NPA), principal outstanding, overdue amount, months on book | risk |
+| `agg_lending_portfolio_daily` | day × lender × product × bucket | loan book and PAR30/PAR90 | risk, finance |
+| `agg_lending_disbursals_daily` | day × lender × product × channel | volume, fees, ticket size, weighted rate, cooling-off cancellations | business |
+| `agg_lending_funnel_daily` | application day × product × channel | submitted → approved → accepted → disbursed, time to cash | product |
+| `agg_lending_collections_daily` | EMI due day × lender × product | on-time collection efficiency, auto-debit bounce rate | collections |
+| `fct_lending_loan_milestones` | loan | first day at DPD 1/31/61/91, first-payment default | risk |
+| `agg_lending_vintage_monthly` | cohort month × MOB × lender × product | "ever 30+ / 90+ by month n" curves | risk |
+| `agg_lending_roll_rates_monthly` | month × lender × product × from-bucket × to-bucket | how many loans worsen or cure each month | risk, collections |
+| `app_lending_customer_summary` | customer | active loans, outstanding, next due date and amount (no clock: the app shows "N days overdue" at display time) | product |
+
+**Definitions that decide correctness**
+- DPD = days from the oldest installment not fully paid at that day's end (IST) + 1; a partial payment leaves the installment overdue.
+- NPA stays NPA until no installment due on or before the date is unpaid, so each day's row reads the previous day's. A restated day is re-run with every later day, in order.
+- First-time milestones (DPD 31, 61, 91, first-payment default) are a pure function of due dates and full-payment dates. They are recomputed from the current schedule when a loan changes, so a late or reversed payment corrects them without scanning daily history.
+- Vintage uses "ever 30+ by month n", which never decreases and compares cohorts fairly.
+
+**Size:** ~10M active loans → `fct_lending_loan_daily` ≈ 10M rows/day ≈ 0.4 GB/day compressed (≈ 40 B/row). Daily rows are kept 13 months (≈ 160 GB) and month-end rows 5 years (≈ 600M rows ≈ 25 GB). The daily build reads ~120M open installments: minutes on a Medium warehouse.
+
+</details>
 
 **Gold grains are set by business teams (A14).** Each Gold table declares its grain, owner, refresh and retention in dbt `meta`, agreed with the owning team:
 
@@ -303,11 +346,11 @@ The app profile is one row per customer (≈ 2–3 KB × 50M ≈ 100–150 GB): 
 
 ## 12. Test plan
 
-The full plan is in [test-plan.md](test-plan.md): 15 tests grouped by question, each naming the mistake it catches. Seven are already written as code (marked ✅), including the two that matter most: the ordering-guard unit tests (arrival order and duplicates never change the current state) and the balance test (matched + breaks = total on both sides, exact paise).
+The full plan is in [test-plan.md](test-plan.md): 21 tests grouped by question, each naming the mistake it catches. Twelve are already written as code (marked ✅), including the two that matter most: the ordering-guard unit tests (arrival order and duplicates never change the current state) and the balance test (matched + breaks = total on both sides, exact paise).
 
 ## Appendix: code & tests index
 
-*Written as reviewable code (dbt-snowflake 1.10 parses it cleanly: 14 models, 1 snapshot, 14 data tests, 3 unit tests); not run against Snowflake. The connector configs and the outbox SQL are written to the documented Debezium / Confluent options but not run; version-specific keys are flagged in `code/connect/README.md`. The deep dives (B, C) carry most of the code; the source plumbing is kept short.*
+*Written as reviewable code (dbt-snowflake 1.10 parses it cleanly: 25 models, 1 snapshot, 31 data tests, 4 unit tests; every model also passes a Snowflake-dialect syntax check); not run against Snowflake. The connector configs and the outbox SQL are written to the documented Debezium / Confluent options but not run; version-specific keys are flagged in `code/connect/README.md`. The deep dives (B, C) carry most of the code; the source plumbing is kept short.*
 
 | Path (under `code/`) | Proves | Deep dive |
 |---|---|---|
@@ -319,6 +362,12 @@ The full plan is in [test-plan.md](test-plan.md): 15 tests grouped by question, 
 | `dbt/models/silver/lending/silver_lending_loans_current.sql` | **The ordering guard**: an event is applied only if its sequence is higher | B |
 | `dbt/models/silver/lending/_silver_lending.yml` | Schema tests + **3 dbt unit tests** for the guard (late older event, newer event, duplicates/out-of-order in one batch) | B |
 | `dbt/tests/assert_current_matches_latest_history.sql` | Current state always equals the highest sequence in history | B |
+| `dbt/models/silver/lending/silver_lending_installments.sql`, `silver_lending_applications_current.sql` | Repayment schedule per loan, replaced from the guarded latest state; applications under the same ordering guard | Lending |
+| `dbt/models/gold/lending/fct_lending_loan_daily.sql` | **RBI day-end DPD and SMA/NPA bucket per loan per day**; NPA sticky until all arrears are paid; IST paid dates | Lending |
+| `dbt/models/gold/lending/fct_lending_loan_milestones.sql` | First day at DPD 31/61/91 and first-payment default, derived from the schedule (correct after late payments) | Lending |
+| `dbt/models/gold/lending/agg_lending_*` | Portfolio (PAR), disbursals, funnel, collections efficiency and bounce rate, vintage curves, roll rates; additive measures only | Lending |
+| `dbt/models/gold/app/app_lending_customer_summary.sql` | What the app shows: active loans, outstanding, next due date and amount; no clock in the model | Lending |
+| `dbt/models/gold/lending/_lending.yml` + `dbt/tests/assert_lending_portfolio_ties_to_loans.sql`, `assert_vintage_curves_never_decrease.sql` | **Unit test of the RBI rule** (bucket edges, UTC/IST trap, sticky NPA); aggregates tie to the loan level; curves never fall | Lending |
 | `dbt/models/staging/partners/stg_partner_lending_nbfc_017.sql` | Vendor mapping; rupee text → exact paise; NULL-safe row hash | C |
 | `dbt/models/staging/partners/partner_snapshot_approval.sql` | Truncation guard as data: only files matching their trailer and within ±10% rows are approved | C |
 | `dbt/snapshots/snap_partner_records.sql` | Daily diff of the full snapshot (SCD2); reads only approved files | C |

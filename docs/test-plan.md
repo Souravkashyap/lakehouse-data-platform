@@ -31,11 +31,22 @@
 | 12 | Each partner file matches its **control trailer** (rows and paise) | a bad file loaded silently | ✅ rows: `partner_snapshot_approval.sql` |
 | 13 | A **bad edit in the Ops spreadsheet** (duplicate product, fee out of range, unparseable amount) never replaces the last good fee rules, and the owner is paged | a hand-edited sheet flowed straight into reconciliation | ✅ `ref_fee_rules.sql` + `assert_fee_rules_latest_snapshot_valid.sql` |
 
+## Are the lending numbers right?
+
+| # | We check that… | It fails if… | Status |
+|:-:|---|---|---|
+| 14 | DPD follows RBI day-end counting: an EMI due 31 Mar and unpaid is SMA-1 on 30 Apr, SMA-2 on 30 May, NPA on 29 Jun; edges 30/31, 60/61, 90/91 | the count was off by one, or buckets used ≥ instead of > | ✅ unit test `dpd_follows_rbi_day_end_rule` |
+| 15 | A payment at 00:10 IST on the next day does not count for the day before | the paid date was taken in UTC | ✅ same unit test (loan G) |
+| 16 | An NPA loan stays NPA until all arrears are paid, then returns to CURRENT | NPA was recomputed from today's DPD alone | ✅ same unit test (loans H, I) |
+| 17 | First-time 30+/90+ dates stay correct after a late payment is recorded | milestones were accumulated from daily history instead of derived from the schedule | |
+| 18 | Portfolio totals tie to the loan-level snapshot (loans, POS, overdue) | an aggregate dropped or double-counted loans | ✅ `assert_lending_portfolio_ties_to_loans.sql` |
+| 19 | Vintage curves never decrease with months on book, and 90+ ≤ 30+ ≤ cohort | the curve used current DPD, or a cohort's denominator moved | ✅ `assert_vintage_curves_never_decrease.sql` |
+
 ## Running it
 
 | # | We check that… | It fails if… | Status |
 |:-:|---|---|---|
-| 14 | Late data in an **open** month restates the day and logs it; in a **closed** month, finance figures stay frozen | a correction silently overwrote a reported number | |
-| 15 | A run **killed halfway** leaves no gaps or duplicates after the next run | a step wasn't safe to repeat | |
+| 20 | Late data in an **open** month restates the day and logs it; in a **closed** month, finance figures stay frozen | a correction silently overwrote a reported number | |
+| 21 | A run **killed halfway** leaves no gaps or duplicates after the next run | a step wasn't safe to repeat | |
 
 **Why tests 1 and 5 matter most:** they sit exactly where the two hard guarantees live. If the ordering guard or the reconciliation were wrong, state or money would drift silently, and these turn red first.

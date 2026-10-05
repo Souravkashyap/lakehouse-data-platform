@@ -4,7 +4,7 @@
 
 ## 0. Summary
 
-We build one data platform for lending, insurance and recharge. Each business writes its changes as events in the same database transaction as the change itself, so nothing is lost or invented. Events flow through Kafka into an S3 data lake. Snowflake cleans them into tables for analysts, finance, data scientists, auditors and customer apps. Raw data is kept 5 years, so any number can be rebuilt and traced.
+One data platform for lending, insurance and recharge. Each business writes its changes as events in the same transaction as the change, so nothing is lost or invented. Events flow through Kafka into S3; Snowflake turns them into tables for analysts, finance, data scientists, auditors and apps. Raw data is kept 5 years, so any number can be rebuilt.
 
 - **Correct latest state (§8, code).** Each loan, policy and order ends in its right state, however events are duplicated, late or out of order.
 - **Every paisa matches (§9, code).** Our books are proven against partner records, or every difference is listed and owned.
@@ -37,7 +37,7 @@ We build one data platform for lending, insurance and recharge. Each business wr
   - Keep 5 years: raw, finance, money and audit tables 5 years; other Silver and Gold per business-team requirement, 2–5 years.
   - Show completeness and freshness per table; meet A8; reproduce any reported number.
 - **Must not do:** sit on a transaction's critical path; change a closed month silently; match money on "close" amounts.
-- **Non-goals:** real-time fraud or online ML; identity resolution (A7); multi-region DR (A11); clickstream; a full privacy design (erasure versus 5-year history is noted, not designed; tokenisation plus crypto-shredding is the likely route).
+- **Non-goals:** real-time fraud or online ML; identity resolution (A7); multi-region DR (A11); clickstream; a full privacy design (tokenisation plus crypto-shredding is the likely route).
 
 ## 3. Napkin math
 
@@ -74,8 +74,8 @@ We build one data platform for lending, insurance and recharge. Each business wr
 *List prices, verify for Mumbai:* MSK broker ~$0.21/h and storage ~$0.10/GB-month · Connect ~$0.11/unit-hour (~14 units) · MWAA ~$0.49/h · Transfer Family ~$0.30/h · cross-zone ~$0.02/GB (~10 TB/month) · S3 and Iceberg storage ~$25/TB-month (S3 raw tiered).
 
 **What it tells us**
-- **Compute is about half the bill, and BI is 60% of it:** auto-suspend, result caching and scheduled refresh are the levers (§10).
-- **Storage is the line that grows:** keeping partner changes instead of full daily snapshots saves ≈ 48 TB over 5 years; dropping the Silver payload after 90 days (§10) is the next lever.
+- **Compute is about half the bill, and BI is 60% of it:** auto-suspend (60 s), result caching and scheduled refresh are the levers.
+- **Storage is the line that grows:** keeping partner changes instead of full daily snapshots saves ≈ 48 TB over 5 years; dropping the raw Silver payload after 90 days (about half its size) is the next lever.
 
 ## 4. Architecture
 
@@ -123,7 +123,7 @@ We build one data platform for lending, insurance and recharge. Each business wr
   - Every row is checked (unique product code, fee 0–10,000 bps, rupees → exact paise, valid date range); a snapshot is used only if all rows pass.
   - **A bad edit never replaces good rules:** the last valid snapshot keeps serving and a test pages the sheet owner.
 
-**Code per source:** `code/sources/service_db/outbox.sql`; `code/connect/`; `lakehouse_partner_daily.py` + partner models; `lakehouse_external_daily.py` + `staging/external/` (Appendix C). Topics, envelope, payloads, S3 layout (A13): Appendix A.
+Topics, event envelope, payloads and S3 layout (A13): Appendix A. Code per source: Appendix C.
 
 **Schema changes**
 - Avro schemas with backward compatibility are enforced in the registry: a breaking change is rejected before Kafka.
@@ -159,9 +159,8 @@ We build one data platform for lending, insurance and recharge. Each business wr
 - *Decision sentence:* we chose a completeness gate with allowed lateness over a fixed-time cutoff and freshness-only checks, because a fixed cutoff publishes incomplete days silently and "recent" does not mean "whole"; it costs a late publish when a source is late (finance sees "partner X pending", not a wrong figure); it breaks first when one chronically late partner blocks the gate every night. Source-emitted "hour closed" markers are a stronger upgrade but need every service changed.
 
 **Consistent meaning (semantic layer)**
-- Metrics are defined once in dbt and served as Snowflake semantic views to BI and Cortex Analyst (plain-English questions); OSI is the portability path (verify maturity).
-- Each metric has one owning team (finance: "disbursed amount"; lending: "EMI collection rate"); changes are reviewed, versioned and certified.
-- Guardrails, since plain-English answers can be wrong on money: certified Gold tables and approved metrics only; every answer shows its SQL; questions logged; ~30–50 known questions as a CI regression set; roles, masking and row policies; Cortex cost monitored.
+- Metrics are defined once in dbt, owned by one team each (finance: "disbursed amount"; lending: "EMI collection rate"), and served as Snowflake semantic views to BI and Cortex Analyst.
+- Guardrails for plain-English answers: approved metrics on certified Gold only; every answer shows its SQL; ~30–50 known questions run in CI.
 - **Official finance figures come only from `gold_finance` and `finance_close`.**
 
 ## 7. Serving it
@@ -175,12 +174,7 @@ We build one data platform for lending, insurance and recharge. Each business wr
 | Internal tools | Snowflake read-only role; scheduled extracts | Small warehouse | Per run |
 | Auditors | Read-only Silver, `finance_close`, `ops.*`; raw S3 via external table; lineage | — | On request |
 
-**Gold grains** (A14): each Gold table declares grain, owner, refresh and retention in dbt `meta`.
-- **Hourly.** Recharge volume and success rate, EMI collections in progress. Business units, Ops; every 15 min; e.g. 90 days.
-- **Daily.** Money movements, reconciliation, collections, premiums. Finance, analysts; after the daily gate; 2–5 years (finance 5).
-- **Monthly.** Finance close, spending insights, trends. Finance, analysts; monthly rollup; 5 years.
-- **Customer-level.** App profile, offer and coupon eligibility, segments, features. Product, data science; every 15 min or daily; current + history as required.
-- **Entity-level.** Loan-book snapshot, policy status. Business units; daily; 2–5 years.
+**Gold grains** (A14): each Gold table declares its grain (hourly, daily, monthly, customer- or entity-level), owner, refresh and retention (2–5 years; finance 5) in dbt `meta`, set by the owning business team.
 
 **Lending, modelled for lending** (tables: Appendix B). Three facts shape the model:
 1. **An unpaid loan emits no events,** so a DPD stored in the last event goes stale exactly when it matters. DPD is computed from the repayment schedule as of a date.
@@ -193,6 +187,12 @@ We build one data platform for lending, insurance and recharge. Each business wr
 - **Access.** Roles per consumer group, masking on personal data, row-access policies per unit.
 - *Decision sentence:* we chose DynamoDB over serving apps from Snowflake because it gives single-digit ms single-key reads at ≈ $0.75–1.25k/month against a 24×7 warehouse at ≈ $2.2k/month; it costs a second store and an API to keep in sync; it breaks first on write cost if profile churn grows well beyond ~10M updates/day.
 - **When it fails.** A failed push leaves apps on the last profile, with an old `data_as_of`. If Snowflake is down, apps are unaffected.
+
+**Why these two problems.** I picked the failures that are silent and costly:
+- **They corrupt money or what a customer sees,** not just a dashboard.
+- **They don't fail loudly:** pipelines stay green while state or totals drift (a late event wins; a missing ₹500 cancels a duplicate ₹500).
+- **They need a guarantee, not a setting:** no tool option fixes them.
+- **Not chosen:** completeness is designed (§6) but not coded; schema drift is handled by registry contracts (§5); customer identity is out of scope (A7).
 
 ## 8. Deep dive 1 — B: correct latest state
 
@@ -274,7 +274,7 @@ We build one data platform for lending, insurance and recharge. Each business wr
 
 ## 10. Living with it
 
-- **Running.** One Airflow DAG every 15 min: copy → dbt Silver per unit → shared Silver → app profile and push → intraday analytics (≈ 6–10 min of the 15). `max_active_runs=1`, `catchup=False`, two retries 2 minutes apart. Daily Gold starts when the gate opens; month close on working day 2.
+- **Running.** One Airflow DAG every 15 min: copy → dbt Silver → app profile and push (≈ 6–10 min of the 15); one run at a time, two retries. Daily Gold starts when the gate opens.
 - **Failure and recovery**
   - Each dbt model is one atomic statement: no table is half-written.
   - The next run re-reads by `_loaded_at` with a 30-minute overlap; writes are idempotent (dedup + guard).
@@ -284,9 +284,8 @@ We build one data platform for lending, insurance and recharge. Each business wr
 - **Retention**
   - Kafka 7 days; Bronze 90 days; quarantine 1 year.
   - S3 raw 5 years (partner full snapshots 90 days, then month-end snapshots plus daily change sets, from which any day can be rebuilt).
-  - Silver and Gold 2–5 years by table and grain (e.g. hourly 90 days, monthly 5 years): `meta: retention_years` in dbt, enforced by a daily delete job by event date; 5-year floor for finance Gold, `finance_close`, `silver.money_movements`, Ops run records.
+  - Silver and Gold 2–5 years per table (`meta: retention_years`, daily delete job); 5-year floor for finance tables, `silver.money_movements` and run records.
 - **Audit trail.** `ops.run_manifest`: Airflow run ID, dbt run ID, git SHA, input range per run.
-- **Cost levers (§3).** BI ≈ 60% of Snowflake: auto-suspend 60 s, result caching, scheduled refresh. Silver storage is the largest storage line: drop the raw JSON payload after 90 days (about half the size).
 
 ## 11. Where it breaks first
 
@@ -304,6 +303,14 @@ Each item: what breaks — sign — mitigation.
 ## 12. Test plan
 
 21 tests, 12 written as code (✅); **tests 1 (ordering-guard unit tests) and 5 (balance test) matter most.** Full plan, each test naming the mistake it catches: [test-plan.md](test-plan.md).
+
+## 13. Honesty: limitations and AI use
+
+- **Assumed, not given:** every volume, schema, event type and SLA (§1). Costs use list prices, not Mumbai quotes.
+- **Not built:** the completeness gate (design only); insurance and recharge Silver (lending is the worked example); many-to-one settlement and the bank-statement leg (§9); multi-region DR; a full privacy design.
+- **Unverified:** nothing has run on Snowflake. The code parses and passes a Snowflake-dialect syntax check, but the unit tests have not executed. Snowflake-managed Iceberg details (clustering, VARIANT, Fail-safe), the connector settings and the partner-load time need checking.
+- **Simplified:** DPD treats a partial payment made after day D as unpaid on D; principal outstanding is on a scheduled basis.
+- **AI use:** I used Claude (Anthropic) to research options, draft this document, the code and the tests, and review them. The design decisions are mine, including Snowflake over Databricks, dbt in Airflow over Streams and Tasks, Iceberg for Silver and Gold, DynamoDB for apps, full partner snapshots, and lending modelled on RBI rules.
 
 ## Appendix A — Event topics, schema and S3 layout
 
@@ -373,7 +380,7 @@ s3://lakehouse-raw/
 
 ## Appendix C — Code and tests index
 
-*Written as reviewable code: dbt-snowflake 1.10 parses it cleanly (25 models, 1 snapshot, 31 data tests, 4 unit tests) and every model passes a Snowflake-dialect syntax check; not run against Snowflake. Connector configs and outbox SQL follow documented Debezium / Confluent options but are not run; version-specific keys are flagged in `code/connect/README.md`. Deep dives B and C carry most of the code.*
+*25 models, 1 snapshot, 31 data tests, 4 unit tests; parses and passes a Snowflake-dialect syntax check, not run (§13). Connector keys that vary by version are flagged in `code/connect/README.md`.*
 
 | Path (under `code/`) | Proves | Dive |
 |---|---|---|

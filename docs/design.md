@@ -42,16 +42,19 @@ We build one data platform for lending, insurance and recharge. Each business wr
 ## 3. Napkin math
 
 **Key numbers**
-- **Events:** 2,000/s × 86,400 ≈ 173M/day (ceiling 864M/day). Records: + 500M file rows ≈ 673M/day.
-- **Peak ingest:** 10,000/s × ~1 KB ≈ 10 MB/s (≈ 30 MB/s with RF 3).
-- **Raw landed:** events 173M × ~1 KB ÷ 5 (Parquet) ≈ 35 GB; partner snapshot 500M × ~300 B ÷ 5 ≈ 30 GB. ≈ 65 GB/day landed; partner changes (5%) ≈ 1.5 GB, so ≈ 37 GB/day kept long-term.
-- **S3 raw, 5 years:** events 35 GB × 1,825 ≈ 64 TB; partner snapshots 90 days ≈ 2.7 TB + month-end and change sets ≈ 4.5 TB. ≈ 71 TB, ≈ $490–545/month at year 5.
-- **Kafka, 7 days:** 2 MB/s × 86,400 × 7 × 3 replicas ≈ 3.6 TB.
-- **Snowflake Bronze:** events 35 GB × 90 days ≈ 3.2 TB + partner ≈ 0.2 TB = ≈ 3.4 TB, ≈ $85–135/month.
-- **Silver + Gold (Iceberg in our S3):** ~40 GB/day; ≈ 15 TB year 1, ≈ 73 TB year 5 if every team keeps 5; ≈ $0.37k → ≈ $1.8k/month at ~$25/TB.
-- **Snowflake credits:** ≈ 52/day × $3 × 30 ≈ $4.7k/month = load 4.8 (96 COPY runs × ~1.5 min, Small, 2 credits/h ≈ $430/month) + transform 13.6 + finance 2 + BI 32 (Medium, ~8 h/day); BI ≈ 60%.
-- **Partner-file load:** Large warehouse nightly, load 150 GB + diff 500M rows, ~45–90 min, 6–12 credits/day (estimate; needs one test load), ≈ $540–1,080/month.
-- **DynamoDB:** reads ≈ $160–650 + writes ≈ $560 + storage ≈ $31 ≈ $0.75–1.25k/month.
+
+| Item | Calculation | Result |
+|---|---|---|
+| Events | 2,000/s × 86,400; + 500M file rows | ≈ 173M events/day (ceiling 864M); ≈ 673M records/day |
+| Peak ingest | 10,000/s × ~1 KB | ≈ 10 MB/s (≈ 30 MB/s with RF 3) |
+| Raw landed | events 173M × ~1 KB ÷ 5 (Parquet) ≈ 35 GB; partner snapshot 500M × ~300 B ÷ 5 ≈ 30 GB; partner changes (5%) ≈ 1.5 GB | ≈ 65 GB/day landed; ≈ 37 GB/day kept long-term |
+| S3 raw, 5 years | events 35 GB × 1,825 ≈ 64 TB; partner snapshots 90 days ≈ 2.7 TB + month-end and change sets ≈ 4.5 TB | ≈ 71 TB; ≈ $490–545/month at year 5 |
+| Kafka, 7 days | 2 MB/s × 86,400 × 7 × 3 replicas | ≈ 3.6 TB |
+| Snowflake Bronze | events 35 GB × 90 days ≈ 3.2 TB + partner ≈ 0.2 TB | ≈ 3.4 TB; ≈ $85–135/month |
+| Silver + Gold (Iceberg in our S3) | ~40 GB/day; ≈ 15 TB year 1, ≈ 73 TB year 5 if every team keeps 5; at ~$25/TB | ≈ $0.37k → ≈ $1.8k/month |
+| Snowflake credits | ≈ 52/day × $3 × 30 = load 4.8 (96 COPY runs × ~1.5 min, Small, 2 credits/h ≈ $430/month) + transform 13.6 + finance 2 + BI 32 (Medium, ~8 h/day) | ≈ $4.7k/month; BI ≈ 60% |
+| Partner-file load | Large warehouse nightly: load 150 GB + diff 500M rows, ~45–90 min, 6–12 credits/day (estimate; needs one test load) | ≈ $540–1,080/month |
+| DynamoDB | reads ≈ $160–650 + writes ≈ $560 + storage ≈ $31 | ≈ $0.75–1.25k/month |
 
 **Monthly cost (list prices, verify for Mumbai)**
 
@@ -67,9 +70,8 @@ We build one data platform for lending, insurance and recharge. Each business wr
 | S3 raw | tiered, to ~71 TB | ~280 (year 1) → 490–545 (year 5) |
 | S3 Silver + Gold | to ~73 TB | ~370 (year 1) → ~1,800 (year 5) |
 | **Total** | | **≈ $9.5–10.6k (year 1) → ≈ $11–12.3k (year 5)** |
-
-- Compute is about half the bill, BI its largest part; storage grows each year.
-- Keeping partner **changes**, not full daily snapshots, saves ≈ 48 TB over 5 years; the Silver payload drop (§10) is the other storage lever.
+| *Where it goes* | Compute is about half the bill, BI its largest part; storage grows each year | — |
+| *Storage levers* | Keep partner **changes**, not full daily snapshots (saves ≈ 48 TB over 5 years); drop the Silver payload (§10) | — |
 
 ## 4. Architecture
 

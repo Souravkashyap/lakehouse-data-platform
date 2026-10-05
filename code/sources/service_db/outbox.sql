@@ -37,13 +37,15 @@ select e.event_id, 'loan', l.loan_id, 'EmiPaid',
            'aggregate_id', l.loan_id,
            'sequence',     l.version,
            'occurred_at',  now(),
-           'customer_id',  l.customer_id,
-           'data',  jsonb_build_object('amount_paise', :amount_paise, 'payment_ref', :'payment_ref', 'lender_id', l.lender_id),
-           'state', jsonb_build_object('status', l.status,
-                                       'outstanding_principal_paise', l.outstanding_principal_paise,
-                                       'next_emi_date', l.next_emi_date,
-                                       'next_emi_paise', l.next_emi_paise,
-                                       'days_past_due', l.days_past_due))
+           -- the envelope above is the same for every topic; only this payload differs
+           'payload', jsonb_build_object(
+               'customer_id', l.customer_id,
+               'data',  jsonb_build_object('amount_paise', :amount_paise, 'payment_ref', :'payment_ref', 'lender_id', l.lender_id),
+               'state', jsonb_build_object('status', l.status,
+                                           'outstanding_principal_paise', l.outstanding_principal_paise,
+                                           'next_emi_date', l.next_emi_date,
+                                           'next_emi_paise', l.next_emi_paise,
+                                           'days_past_due', l.days_past_due)))
   from l
  cross join lateral (select gen_random_uuid() as event_id) e
 returning id \gset

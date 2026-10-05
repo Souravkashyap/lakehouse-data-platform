@@ -1,9 +1,12 @@
 -- docs/test-plan.md test 5: matched + breaks = total. Returns rows only when reconciliation lost or double-counted money.
 -- Source totals are recomputed independently of the matching engine. Design: section 9.
+-- Checks the business dates re-reconciled in this run (not all 5 years).
+{% set run_date = require_run_date() %}
 with covered as (
 
-    select min(business_date) as min_date, max(business_date) as max_date
+    select distinct business_date
     from {{ ref('fct_reconciliation_items') }}
+    where reconciled_for_run_date = '{{ run_date }}'::date
 
 ),
 
@@ -13,7 +16,7 @@ source_totals as (
            count(*) as src_items, sum(amount_paise) as src_paise
     from {{ ref('silver_money_movements') }}
     where vendor is not null
-      and business_date between (select min_date from covered) and (select max_date from covered)
+      and business_date in (select business_date from covered)
     group by all
 
     union all
@@ -22,7 +25,7 @@ source_totals as (
            count(*), sum(amount_paise)
     from {{ ref('silver_partner_records') }}
     where line_type = 'TRANSACTION'
-      and business_date between (select min_date from covered) and (select max_date from covered)
+      and business_date in (select business_date from covered)
     group by all
 
 ),
@@ -35,6 +38,7 @@ item_totals as (
            coalesce(sum(case when result in ('MATCHED_EXACT', 'MATCHED_SECONDARY') then amount_paise end), 0) as matched_paise,
            coalesce(sum(case when result not in ('MATCHED_EXACT', 'MATCHED_SECONDARY') then amount_paise end), 0) as break_paise
     from {{ ref('fct_reconciliation_items') }}
+    where business_date in (select business_date from covered)
     group by all
 
 )

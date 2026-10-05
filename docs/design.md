@@ -137,23 +137,32 @@ We build one data platform for lending, insurance and recharge. Each business wr
 
 ## 6. Making it trustworthy
 
-- **Correct.** See §8 (record state) and §9 (money).
-- **Complete** (hard problem A, design only). Two tiers:
-  - **Intraday** (apps, intraday analysts): non-blocking. We publish what has arrived; every table carries `data_as_of`. Worst case ≈ 33 min (sink 5 + COPY wait 15 + load 2 + Silver 3 + app Gold 3 + push 5).
-  - **Daily** (data scientists 06:00, analysts 07:00, finance 09:00): a blocking gate. An arrival hour is complete when Kafka offsets reach Silver with no gaps, counts match across Kafka, S3, Bronze and Silver, and Debezium heartbeats show live connectors.
-  - Business day D is complete when arrival hours through D+1 01:00 IST are complete (1 h allowed lateness, tuned to p99.9 of arrival minus event time) and all expected partner files for D are loaded, match control totals and are diffed. Result: `ops.completeness`.
-  - The gate is **split in two** because partner snapshots are full files. **Internal gate** (≈ 01:30): releases features and daily analytics, done ≈ 02:30. **Partner gate** (loaded and diffed, ≈ 03:00–03:40): releases finance reconciliation, done ≈ 04:40.
-  - *Guarantee:* a business day appears in finance Gold only when every unit's events and every expected partner file for that day are loaded with no offset gaps and matching counts at every hop; if late data changes a published, non-closed day, the day is restated and the change is logged.
-  - *Escalation:* page at 04:30 if the gate is closed. At 06:00 and 07:00 the day is marked provisional, naming the missing source. Finance never gets an incomplete day as final.
-  - Late data in an open month restates day D in the next run (`ops.restatements`). In a closed month, `finance_close` is unchanged and the change is a prior-period adjustment in the current month.
-  - *Decision sentence:* we chose a completeness gate with allowed lateness over a fixed-time cutoff and over freshness-only checks, because a fixed cutoff publishes incomplete days silently and "recent" does not mean "whole"; it costs a late publish when a source is late (finance sees "unreconciled, partner X pending", not a wrong figure); it breaks first when one chronically late partner blocks the gate every night. Source-emitted "hour closed" markers are a stronger upgrade but need every service changed.
-- **Fresh.** Intraday ≤ 1 h (worst ≈ 33 min), daily per A8; `data_as_of` on every table; `dbt source freshness` on Bronze `_loaded_at`.
-- **Traceable.** `ops.run_manifest`, lineage (§10); raw S3 lets any number be rebuilt.
-- **Means what they think it means.** Metrics are defined once in dbt, exposed as Snowflake semantic views for BI and Cortex Analyst (plain-English questions). Open Semantic Interchange (OSI) is the portability path (maturity and Snowflake status: verify). It risks wrong answers on money; guardrails limit but do not remove it:
-  - Only certified Gold tables and approved metrics; every answer shows its SQL; all questions logged.
-  - Official finance figures come only from `gold_finance` and `finance_close`.
-  - ~30–50 known questions run as a CI regression set; roles, masking and row policies apply; Cortex cost monitored.
-  - **Owned by business teams (A14):** each metric and its grains belong to its defining team (finance owns "disbursed amount", lending "EMI collection rate"); changes are reviewed, versioned and certified; no two definitions of one metric.
+| Property | How we get it | Where |
+|---|---|---|
+| Correct | Ordering guard (state); item-level reconciliation (money) | §8, §9 |
+| Complete | Two-tier completeness gate (below) | `ops.completeness` |
+| Fresh | SLAs per A8; `data_as_of` on every table; `dbt source freshness` alerts on Bronze | §10 |
+| Traceable | Run manifest and lineage; raw S3 rebuilds any number | §10 |
+| Consistent meaning | Each metric defined once, owned by its business team (A14) | below |
+
+**Completeness gate** (hard problem A, design only)
+
+| Tier | For | Rule | Timing |
+|---|---|---|---|
+| Intraday | Apps, intraday analysts | Non-blocking: publish what has arrived, stamped with `data_as_of` | Worst ≈ 33 min: sink 5 + COPY wait 15 + load 2 + Silver 3 + app Gold 3 + push 5 |
+| Daily: internal gate | Data scientists 06:00, analysts 07:00 | Kafka offsets reach Silver with no gaps, counts match at every hop (Kafka, S3, Bronze, Silver), Debezium heartbeats live. Day D = arrival hours through D+1 01:00 IST (1 h allowed lateness, tuned to p99.9 of arrival minus event time) | Opens ≈ 01:30; done ≈ 02:30 |
+| Daily: partner gate | Finance 09:00 | Internal gate, plus every expected partner file for D loaded, matching its control totals, and diffed | ≈ 03:00–03:40; reconciliation done ≈ 04:40 |
+
+- **Guarantee.** A business day reaches finance Gold only when every unit's events and every expected partner file are loaded with no offset gaps and matching counts at every hop.
+- **When a source is late.** Page at 04:30 if the gate is still closed; at 06:00 and 07:00 the day is published as provisional, naming the missing source. Finance never gets an incomplete day as final.
+- **When late data changes a published day.** Open month: day D is restated in the next run and logged in `ops.restatements`. Closed month: `finance_close` stays unchanged; the change is a prior-period adjustment in the current month.
+- *Decision sentence:* we chose a completeness gate with allowed lateness over a fixed-time cutoff and freshness-only checks, because a fixed cutoff publishes incomplete days silently and "recent" does not mean "whole"; it costs a late publish when a source is late (finance sees "partner X pending", not a wrong figure); it breaks first when one chronically late partner blocks the gate every night. Source-emitted "hour closed" markers are a stronger upgrade but need every service changed.
+
+**Consistent meaning (semantic layer)**
+- Metrics are defined once in dbt and served as Snowflake semantic views to BI and Cortex Analyst (plain-English questions); OSI is the portability path (verify maturity).
+- Each metric has one owning team (finance: "disbursed amount"; lending: "EMI collection rate"); changes are reviewed, versioned and certified.
+- Guardrails, since plain-English answers can be wrong on money: certified Gold tables and approved metrics only; every answer shows its SQL; questions logged; ~30–50 known questions as a CI regression set; roles, masking and row policies; Cortex cost monitored.
+- Official finance figures come only from `gold_finance` and `finance_close`.
 
 ## 7. Serving it
 

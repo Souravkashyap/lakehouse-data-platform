@@ -71,6 +71,8 @@ One data platform for lending, insurance and recharge. Each business writes its 
 | Storage: Snowflake Bronze + S3 raw + Silver/Gold | 85–135 + 280 + 370 | 85–135 + 490–545 + 1,800 |
 | **Total** | **≈ 9.5–10.6k** | **≈ 11–12.3k** |
 
+**Why year 5 costs more: only storage grows.** We keep data for 5 years, so every day adds ~37 GB of raw data and ~40 GB of Silver and Gold. By year 5, S3 raw grows from ~13 TB to ~71 TB and Silver + Gold from ~15 TB to ~73 TB, adding ≈ $1.6–1.7k/month. Everything else stays flat because daily volume is assumed flat; if volume grows, compute, Kafka and DynamoDB grow roughly in line.
+
 *List prices, verify for Mumbai:* MSK broker ~$0.21/h and storage ~$0.10/GB-month · Connect ~$0.11/unit-hour (~14 units) · MWAA ~$0.49/h · Transfer Family ~$0.30/h · cross-zone ~$0.02/GB (~10 TB/month) · S3 and Iceberg storage ~$25/TB-month (S3 raw tiered).
 
 **What it tells us**
